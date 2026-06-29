@@ -249,3 +249,4 @@ async def setup_verification(ctx):
 # ⚠️ 본인의 디스코드 봇 토큰 입력
 import os
 token = os.getenv("DISCORD_TOKEN")
+bot.run(token)
