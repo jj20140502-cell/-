@@ -274,7 +274,7 @@ class InvestUploadView(View):
 
         # 2. 🔒｜길드-투자기록 채널에서 기존 스레드 검색
         log_channel = interaction.guild.get_channel(INVEST_LOG_CHANNEL_ID)
-        thread_name = f"📊 {interaction.user.display_name}님의 투자인증"
+        thread_name = f"{interaction.user.display_name}님의 투자인증"
         
         target_thread = None
         for thread in log_channel.threads:
@@ -283,7 +283,7 @@ class InvestUploadView(View):
                 break
         
         if not target_thread:
-            msg = await log_channel.send(f"📊 {interaction.user.mention}님의 투자 기록 스레드입니다.")
+            msg = await log_channel.send(f"{interaction.user.mention}님의 투자 기록 스레드.")
             target_thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
         
         # 3. 사진 전송
