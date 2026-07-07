@@ -301,7 +301,7 @@ class InvestUploadView(View):
 @commands.has_permissions(administrator=True)
 async def setup_invest(ctx):
     embed = discord.Embed(
-        title="📊 스킬 투자 인증",
+        title="스킬 투자 인증",
         description="인증 사진을 업로드한 후 아래 버튼을 눌러주세요. 개인 스레드에 기록이 누적됩니다.",
         color=discord.Color.blue()
     )
