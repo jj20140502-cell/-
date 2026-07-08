@@ -258,45 +258,52 @@ class InvestUploadView(View):
 
     @discord.ui.button(label="📸 투자 인증 완료", style=discord.ButtonStyle.blurple, custom_id="invest_upload_btn")
     async def invest_done(self, interaction: discord.Interaction, button: Button):
+        # 1. 메시지 및 파일 확인
         target_attachment = None
-        user_image_message = None # 추가
-
-        # 1. 📷｜투자 인증 채널에서 최근 스크린샷 찾기
+        user_image_message = None
         async for message in interaction.channel.history(limit=5):
             if message.author.id == interaction.user.id and message.attachments:
                 target_attachment = message.attachments[0]
-                user_image_message = message # 추가
+                user_image_message = message
                 break
         
         if not target_attachment:
             await interaction.response.send_message("⚠️ 업로드된 스크린샷을 찾을 수 없습니다.", ephemeral=True)
             return
 
-        # 2. 🔒｜길드-투자기록 채널에서 기존 스레드 검색
+        # 2. 🔒｜길드-투자기록 채널에서 기존 스레드 검색 (보관된 스레드 포함)
         log_channel = interaction.guild.get_channel(INVEST_LOG_CHANNEL_ID)
-        thread_name = f"{interaction.user.display_name}님의 투자인증"
+        thread_name = f"📊 {interaction.user.display_name}님의 투자인증"
         
         target_thread = None
-        for thread in log_channel.threads:
+        # 수정: 모든 스레드(보관된 것 포함)를 순회하며 찾기
+        async for thread in log_channel.archived_threads(limit=100):
             if thread.name == thread_name:
                 target_thread = thread
                 break
-        
         if not target_thread:
-            msg = await log_channel.send(f"{interaction.user.mention}님의 투자 기록 스레드.")
+            for thread in log_channel.threads:
+                if thread.name == thread_name:
+                    target_thread = thread
+                    break
+        
+        # 3. 스레드가 없으면 새로 생성, 있으면 아카이브 해제
+        if not target_thread:
+            msg = await log_channel.send(f"{interaction.user.mention}님의 투자 인증")
             target_thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+            await msg.delete()
+        else:
+            if target_thread.archived:
+                await target_thread.edit(archived=False)
         
-        # 3. 사진 전송
+        # 4. 사진 전송 및 원본 삭제
         await target_thread.send(f"👤 {interaction.user.mention}님의 인증 (일시: {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M')})", file=await target_attachment.to_file())
-        
-        # 4. (중요) 유저가 올린 원본 메시지 삭제
         try:
             await user_image_message.delete()
         except:
             pass
         
-        # 5. 완료 알림
-        await interaction.response.send_message("✅ 투자 기록이 스레드에 저장되었습니다! (원본 사진은 삭제되었습니다.)", ephemeral=True)
+        await interaction.response.send_message("✅ 투자 기록이 기존 스레드에 저장되었습니다!", ephemeral=True)
 @bot.command(name="투자설정")
 @commands.has_permissions(administrator=True)
 async def setup_invest(ctx):
