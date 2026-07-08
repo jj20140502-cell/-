@@ -273,7 +273,7 @@ class InvestUploadView(View):
 
         # 2. 채널 내 모든 스레드(활성 + 보관됨) 검색
         log_channel = interaction.guild.get_channel(INVEST_LOG_CHANNEL_ID)
-        thread_name = f"📊 {interaction.user.display_name}님의 투자인증"
+        thread_name = f" {interaction.user.display_name}님의 투자인증"
         
         target_thread = None
         # 활성 스레드 검색
@@ -290,7 +290,7 @@ class InvestUploadView(View):
         
         # 3. 스레드가 없으면 새로 생성 (메시지 즉시 삭제 포함)
         if not target_thread:
-            msg = await log_channel.send(f"📊 {interaction.user.display_name}님의 투자 기록 스레드입니다.")
+            msg = await log_channel.send(f"{interaction.user.display_name}님의 투자 기록 스레드입니다.")
             target_thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
             await msg.delete() # 메시지 삭제
         else:
