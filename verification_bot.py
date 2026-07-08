@@ -273,7 +273,7 @@ class InvestUploadView(View):
 
         # 2. 🔒｜길드-투자기록 채널에서 기존 스레드 검색 (보관된 스레드 포함)
         log_channel = interaction.guild.get_channel(INVEST_LOG_CHANNEL_ID)
-        thread_name = f"📊 {interaction.user.display_name}님의 투자인증"
+        thread_name = f"{interaction.user.display_name}님의 투자인증"
         
         target_thread = None
         # 수정: 모든 스레드(보관된 것 포함)를 순회하며 찾기
