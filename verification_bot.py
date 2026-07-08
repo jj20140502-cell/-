@@ -255,9 +255,12 @@ INVEST_LOG_CHANNEL_ID = 1522243952764387389  # 🔒｜길드-투자기록
 class InvestUploadView(View):
     def __init__(self):
         super().__init__(timeout=None)
-@discord.ui.button(label="📸 투자 인증 완료", style=discord.ButtonStyle.blurple, custom_id="invest_upload_btn")
+    @discord.ui.button(label="📸 투자 인증 완료", style=discord.ButtonStyle.blurple, custom_id="invest_upload_btn")
     async def invest_done(self, interaction: discord.Interaction, button: Button):
-        # ... (파일 찾는 부분은 동일)
+        target_attachment = None
+        user_image_message = None # 추가
+        
+        # 1. 📷｜투자 인증 채널에서 최근 스크린샷 찾기
         async for message in interaction.channel.history(limit=5):
             if message.author.id == interaction.user.id and message.attachments:
                 target_attachment = message.attachments[0]
