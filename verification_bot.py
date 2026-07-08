@@ -291,7 +291,7 @@ class InvestUploadView(View):
         if not target_thread:
             msg = await log_channel.send(f"{interaction.user.mention}님의 투자 인증")
             target_thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
-            await msg.delete()
+
         else:
             if target_thread.archived:
                 await target_thread.edit(archived=False)
