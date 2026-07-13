@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from discord.ui import Button, View, Modal, TextInput
+from datetime import datetime, timedelta, timezone
 
 # 봇 권한(Intents) 설정
 intents = discord.Intents.default()
@@ -294,8 +295,12 @@ class InvestUploadView(View):
             if target_thread.archived:
                 await target_thread.edit(archived=False)
         
-        # 4. 사진 전송 및 원본 삭제
-        await target_thread.send(f"👤 {interaction.user.mention}님의 인증 (일시: {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M')})", file=await target_attachment.to_file())
+
+        # 4. 사진 전송 및 원본 삭제 (이 부분을 아래처럼 수정하세요)
+        # 한국 시간(KST)으로 변환: UTC + 9시간
+        kst_time = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M')
+        
+        await target_thread.send(f"👤 {interaction.user.mention}님의 인증 (일시: {kst_time})", file=await target_attachment.to_file())
         try:
             await user_image_message.delete()
         except:
