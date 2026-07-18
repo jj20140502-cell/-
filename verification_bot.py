@@ -320,8 +320,11 @@ async def setup_invest(ctx):
     await ctx.send(embed=embed, view=InvestUploadView())
 
 # =========================================================
-# 🌟 [수정] 채널명 단독 입력 또는 채널명+시간 입력 감지 및 알림
+# 🌟 [수정] 특정 채널에만 기록 및 알림을 전송하는 온메시지 기능
 # =========================================================
+# 보스 타임 기록 및 알림이 전송될 채널 ID
+BOSS_LOG_CHANNEL_ID = 1528031320926584872
+
 @bot.event
 async def on_message(message):
     # 봇이 자신이 쓴 메시지에는 반응하지 않도록 방지
@@ -337,6 +340,14 @@ async def on_message(message):
         boss_name = "마뇽"
         spawn_delay = 30 * 60  # 30분 = 1800초
         
+        # 출력 대상 채널 가져오기
+        log_channel = message.guild.get_channel(BOSS_LOG_CHANNEL_ID)
+        if not log_channel:
+            # 지정된 채널을 찾을 수 없는 경우 제보한 채널에 에러 알림 후 종료
+            await message.channel.send("⚠️ 보스 기록 채널을 찾을 수 없습니다. 채널 ID를 확인해 주세요.")
+            await bot.process_commands(message)
+            return
+        
         # 현재 한국 시간(KST) 구하기
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
@@ -347,15 +358,10 @@ async def on_message(message):
             try:
                 # 입력된 'HH:MM' 형태의 시간을 현재 날짜와 결합
                 parsed_time = datetime.strptime(time_str, "%H:%M")
-                # 오늘 날짜에 입력된 시/분을 대입하여 기준 시간 설정
                 base_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
-                
-                # 만약 입력한 시간이 현재 시간보다 미래라면 (혹은 어제 밤 시간 입력 오류 방지 처리가 필요하다면 기본 비교)
-                # 컷 기준 시간 설정 완료
                 start_time = base_time
             except ValueError:
-                # 시간 형식이 올바르지 않으면 안내 후 무시
-                await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `1000 22:34` 형태로 입력해 주세요)")
+                await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `1000 22:34`)")
                 await bot.process_commands(message)
                 return
         else:
@@ -367,20 +373,23 @@ async def on_message(message):
         unix_timestamp = int(target_time.timestamp())
         discord_tag = f"<t:{unix_timestamp}:R>"
 
-        # 3. 컷 확인 메시지 전송
+        # 3. 지정된 기록 채널로 컷 확인 메시지 전송
         formatted_start = start_time.strftime("%H시 %M분")
-        await message.channel.send(
+        await log_channel.send(
             f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다. ({formatted_start} 기준)\n"
             f"⏳ 다음 최소 젠타임까지 {discord_tag} 남았습니다."
         )
 
-        # 4. 실제 알림까지 남은 초(second) 계산하여 대기
-        # 과거 시간을 입력했을 경우 바로 알림이 울리도록 max(0, 변수) 처리
+        # 4. 제보자가 입력한 원본 채널에는 접수 완료 표시만 가볍게 남김 (선택 사항)
+        if message.channel.id != BOSS_LOG_CHANNEL_ID:
+            await message.add_reaction("✅")
+
+        # 5. 실제 알림까지 남은 초(second) 계산하여 대기
         time_to_wait = max(0, (target_time - datetime.now(kst)).total_seconds())
         await asyncio.sleep(time_to_wait)
 
-        # 5. 30분 후 @everyone 알림
-        await message.channel.send(
+        # 6. 30분 후 지정된 기록 채널로 @everyone 알림
+        await log_channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
             f"최소 젠타임(30분)이 시작되었습니다! 채널을 확인해 주세요."
         )
