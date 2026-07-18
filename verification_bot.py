@@ -320,43 +320,35 @@ async def setup_invest(ctx):
     await ctx.send(embed=embed, view=InvestUploadView())
 
 # =========================================================
-# 🌟 [수정] 특정 채널에만 기록 및 알림을 전송하는 온메시지 기능
+# 🌟 [수정] 최소 젠타임 시작(알림) 동시에 기존 메시지 자동 삭제 버전
 # =========================================================
 # 보스 타임 기록 및 알림이 전송될 채널 ID
 BOSS_LOG_CHANNEL_ID = 1528031320926584872
 
 @bot.event
 async def on_message(message):
-    # 봇이 자신이 쓴 메시지에는 반응하지 않도록 방지
     if message.author == bot.user:
         return
 
-    # 공백 기준으로 첫 번째 단어와 두 번째 단어 분리
     tokens = message.content.split()
     
-    # 1. 메시지가 있고, 첫 번째 단어가 순수하게 '숫자(채널명)'인지 확인
     if tokens and tokens[0].isdigit():
         channel_name = tokens[0]
         boss_name = "마뇽"
-        spawn_delay = 160 * 60  # 30분 = 9600초
+        spawn_delay = 160 * 60  # 30분 = 9600초 (원하는 최소 젠타임 분을 여기에 설정)
         
-        # 출력 대상 채널 가져오기
         log_channel = message.guild.get_channel(BOSS_LOG_CHANNEL_ID)
         if not log_channel:
-            # 지정된 채널을 찾을 수 없는 경우 제보한 채널에 에러 알림 후 종료
             await message.channel.send("⚠️ 보스 기록 채널을 찾을 수 없습니다. 채널 ID를 확인해 주세요.")
             await bot.process_commands(message)
             return
         
-        # 현재 한국 시간(KST) 구하기
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         
-        # 시간 입력이 같이 들어온 경우 (ex: 1000 22:34)
         if len(tokens) >= 2:
             time_str = tokens[1]
             try:
-                # 입력된 'HH:MM' 형태의 시간을 현재 날짜와 결합
                 parsed_time = datetime.strptime(time_str, "%H:%M")
                 base_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
                 start_time = base_time
@@ -365,36 +357,50 @@ async def on_message(message):
                 await bot.process_commands(message)
                 return
         else:
-            # 시간 입력이 없으면 현재 시간을 기준 시간으로 설정
             start_time = now
 
-        # 2. 기준 시간으로부터 30분 뒤의 유닉스 타임스탬프 계산
-        target_time = start_time + timedelta(minutes=160)
-        unix_timestamp = int(target_time.timestamp())
-        discord_tag = f"<t:{unix_timestamp}:R>"
+        # 1. 기준 시간으로부터 최소 젠타임 뒤의 목표 시각 계산
+        target_time = start_time + timedelta(seconds=spawn_delay)
+        time_to_wait = (target_time - datetime.now(kst)).total_seconds()
+        
+        if time_to_wait > 0:
+            total_minutes = int(time_to_wait // 60)
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            
+            if hours > 0:
+                time_text = f"**{hours}시간 {minutes}분 후**"
+            else:
+                time_text = f"**{minutes}분 후**"
+        else:
+            time_text = "**즉시 젠 예정**"
 
-        # 3. 지정된 기록 채널로 컷 확인 메시지 전송
         formatted_start = start_time.strftime("%H시 %M분")
-        await log_channel.send(
+        
+        # 2. 📢 컷 확인 안내 메시지 전송 (변수에 저장)
+        info_msg = await log_channel.send(
             f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다. ({formatted_start} 기준)\n"
-            f"⏳ 다음 최소 젠타임까지 {discord_tag} 남았습니다."
+            f"⏳ 다음 최소 젠타임까지 {time_text} 남았습니다."
         )
 
-        # 4. 제보자가 입력한 원본 채널에는 접수 완료 표시만 가볍게 남김 (선택 사항)
         if message.channel.id != BOSS_LOG_CHANNEL_ID:
             await message.add_reaction("✅")
 
-        # 5. 실제 알림까지 남은 초(second) 계산하여 대기
-        time_to_wait = max(0, (target_time - datetime.now(kst)).total_seconds())
-        await asyncio.sleep(time_to_wait)
+        # 3. 실제 최소 젠타임(알림 울릴 시간)까지 대기
+        await asyncio.sleep(max(0, time_to_wait))
 
-        # 6. 30분 후 지정된 기록 채널로 @everyone 알림
+        # 4. ⏰ 시간이 되어 @everyone 알림이 울리기 '직전'에 기존 안내 메시지 삭제
+        try:
+            await info_msg.delete()
+        except:
+            pass  # 이미 수동으로 지워졌거나 권한 문제가 있을 경우 에러 방지
+
+        # 5. 최소 젠타임 시작 알림 전송 (이 메시지는 채널에 남습니다)
         await log_channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
-            f"최소 젠타임(2시간40분)이 시작되었습니다! 채널을 확인해 주세요."
+            f"최소 젠타임이 시작되었습니다! 채널을 확인해 주세요."
         )
         
-    # 기존 명령어들의 정상 작동을 위해 필수 포함
     await bot.process_commands(message)
 
 # ================= [ 코드 끝 부분 ] =================
