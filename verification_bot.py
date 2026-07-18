@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, View, Modal, TextInput
 from datetime import datetime, timedelta, timezone
+import asyncio  # 🌟 추가-마뇽알람
+import time     # 🌟 추가-마뇽알람
 
 # 봇 권한(Intents) 설정
 intents = discord.Intents.default()
@@ -316,6 +318,43 @@ async def setup_invest(ctx):
         color=discord.Color.blue()
     )
     await ctx.send(embed=embed, view=InvestUploadView())
+
+# =========================================================
+# 🌟 [신설] 숫자로 된 채널명 입력 시 마뇽 젠타임 카운트다운 및 알림
+# =========================================================
+@bot.event
+async def on_message(message):
+    # 봇이 자신이 쓴 메시지에는 반응하지 않도록 방지
+    if message.author == bot.user:
+        return
+
+    # 입력된 메시지가 순수하게 '숫자'로만 이루어져 있는지 확인 (ex: 2864)
+    if message.content.isdigit():
+        channel_name = message.content  # 입력한 숫자를 채널명으로 사용
+        boss_name = "마뇽"
+        spawn_delay = 30 * 60  # 30분 = 1800초
+
+        # 1. 30분 뒤의 유닉스 타임스탬프 계산
+        unix_timestamp = int(time.time()) + spawn_delay
+        discord_tag = f"<t:{unix_timestamp}:R>"
+
+        # 2. 컷 확인 메시지 전송
+        await message.channel.send(
+            f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다.\n"
+            f"⏳ 다음 최소 젠타임까지 {discord_tag} 남았습니다."
+        )
+
+        # 3. 백그라운드에서 30분 대기 (봇이 멈추지 않고 다른 작업 가능)
+        await asyncio.sleep(spawn_delay)
+
+        # 4. 30분 후 @everyone 알림
+        await message.channel.send(
+            f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
+            f"최소 젠타임(30분)이 시작되었습니다! 채널을 확인해 주세요."
+        )
+        
+    # 🌟 이 코드가 있어야 기존에 구현된 !최초설정, !투자설정 명령어가 정상 작동합니다.
+    await bot.process_commands(message)
 
 # ================= [ 코드 끝 부분 ] =================
 # ⚠️ 본인의 디스코드 봇 토큰 입력
