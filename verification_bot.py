@@ -338,7 +338,7 @@ async def on_message(message):
     if tokens and tokens[0].isdigit():
         channel_name = tokens[0]
         boss_name = "마뇽"
-        spawn_delay = 30 * 60  # 30분 = 1800초
+        spawn_delay = 60 * 60  # 30분 = 1800초
         
         # 출력 대상 채널 가져오기
         log_channel = message.guild.get_channel(BOSS_LOG_CHANNEL_ID)
@@ -369,7 +369,7 @@ async def on_message(message):
             start_time = now
 
         # 2. 기준 시간으로부터 30분 뒤의 유닉스 타임스탬프 계산
-        target_time = start_time + timedelta(minutes=30)
+        target_time = start_time + timedelta(minutes=60)
         unix_timestamp = int(target_time.timestamp())
         discord_tag = f"<t:{unix_timestamp}:R>"
 
@@ -391,7 +391,7 @@ async def on_message(message):
         # 6. 30분 후 지정된 기록 채널로 @everyone 알림
         await log_channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
-            f"최소 젠타임(30분)이 시작되었습니다! 채널을 확인해 주세요."
+            f"최소 젠타임(60분)이 시작되었습니다! 채널을 확인해 주세요."
         )
         
     # 기존 명령어들의 정상 작동을 위해 필수 포함
