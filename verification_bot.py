@@ -320,7 +320,7 @@ async def setup_invest(ctx):
     await ctx.send(embed=embed, view=InvestUploadView())
 
 # =========================================================
-# 🌟 [수정] 최소 젠타임 시작(알림) 동시에 기존 메시지 자동 삭제 버전
+# 🌟 [최종 수정을 추천] 실시간 카운트다운 + 정확한 시간 표기 버전
 # =========================================================
 # 보스 타임 기록 및 알림이 전송될 채널 ID
 BOSS_LOG_CHANNEL_ID = 1528031320926584872
@@ -335,7 +335,7 @@ async def on_message(message):
     if tokens and tokens[0].isdigit():
         channel_name = tokens[0]
         boss_name = "마뇽"
-        spawn_delay = 160 * 60  # 30분 = 9600초 (원하는 최소 젠타임 분을 여기에 설정)
+        spawn_delay = 160 * 60  # 2시간 40분 = 9600초
         
         log_channel = message.guild.get_channel(BOSS_LOG_CHANNEL_ID)
         if not log_channel:
@@ -359,43 +359,36 @@ async def on_message(message):
         else:
             start_time = now
 
-        # 1. 기준 시간으로부터 최소 젠타임 뒤의 목표 시각 계산
+        # 1. 2시간 40분 뒤의 정확한 목표 시각 계산 및 타임스탬프 변환
         target_time = start_time + timedelta(seconds=spawn_delay)
-        time_to_wait = (target_time - datetime.now(kst)).total_seconds()
+        unix_timestamp = int(target_time.timestamp())
         
-        if time_to_wait > 0:
-            total_minutes = int(time_to_wait // 60)
-            hours = total_minutes // 60
-            minutes = total_minutes % 60
-            
-            if hours > 0:
-                time_text = f"**{hours}시간 {minutes}분 후**"
-            else:
-                time_text = f"**{minutes}분 후**"
-        else:
-            time_text = "**즉시 젠 예정**"
+        # 💡 디스코드 내장 기능 활용: :t는 정확한 시각 표기, :R은 실시간 카운트다운
+        exact_time_tag = f"<t:{unix_timestamp}:t>"  # 예: "오전 7:16"
+        countdown_tag = f"<t:{unix_timestamp}:R>"   # 예: "2시간 후" (실시간으로 줄어듬)
 
         formatted_start = start_time.strftime("%H시 %M분")
         
-        # 2. 📢 컷 확인 안내 메시지 전송 (변수에 저장)
+        # 2. 📢 컷 확인 안내 메시지 전송 (정확한 시간 + 실시간 줄어드는 시계 같이 출력)
         info_msg = await log_channel.send(
             f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다. ({formatted_start} 기준)\n"
-            f"⏳ 다음 최소 젠타임까지 {time_text} 남았습니다."
+            f"⏱️ **{exact_time_tag}** 최소 젠타임 시작 예정 ({countdown_tag})"
         )
 
         if message.channel.id != BOSS_LOG_CHANNEL_ID:
             await message.add_reaction("✅")
 
-        # 3. 실제 최소 젠타임(알림 울릴 시간)까지 대기
+        # 3. 실제 최소 젠타임까지 대기
+        time_to_wait = (target_time - datetime.now(kst)).total_seconds()
         await asyncio.sleep(max(0, time_to_wait))
 
-        # 4. ⏰ 시간이 되어 @everyone 알림이 울리기 '직전'에 기존 안내 메시지 삭제
+        # 4. 시간이 되면 기존 안내 메시지 삭제
         try:
             await info_msg.delete()
         except:
-            pass  # 이미 수동으로 지워졌거나 권한 문제가 있을 경우 에러 방지
+            pass
 
-        # 5. 최소 젠타임 시작 알림 전송 (이 메시지는 채널에 남습니다)
+        # 5. 최소 젠타임 시작 알림 전송
         await log_channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
             f"최소 젠타임이 시작되었습니다! 채널을 확인해 주세요."
