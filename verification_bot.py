@@ -320,7 +320,7 @@ async def setup_invest(ctx):
     await ctx.send(embed=embed, view=InvestUploadView())
 
 # =========================================================
-# 🌟 [신설] 숫자로 된 채널명 입력 시 마뇽 젠타임 카운트다운 및 알림
+# 🌟 [수정] 채널명 단독 입력 또는 채널명+시간 입력 감지 및 알림
 # =========================================================
 @bot.event
 async def on_message(message):
@@ -328,32 +328,64 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # 입력된 메시지가 순수하게 '숫자'로만 이루어져 있는지 확인 (ex: 2864)
-    if message.content.isdigit():
-        channel_name = message.content  # 입력한 숫자를 채널명으로 사용
+    # 공백 기준으로 첫 번째 단어와 두 번째 단어 분리
+    tokens = message.content.split()
+    
+    # 1. 메시지가 있고, 첫 번째 단어가 순수하게 '숫자(채널명)'인지 확인
+    if tokens and tokens[0].isdigit():
+        channel_name = tokens[0]
         boss_name = "마뇽"
         spawn_delay = 30 * 60  # 30분 = 1800초
+        
+        # 현재 한국 시간(KST) 구하기
+        kst = timezone(timedelta(hours=9))
+        now = datetime.now(kst)
+        
+        # 시간 입력이 같이 들어온 경우 (ex: 1000 22:34)
+        if len(tokens) >= 2:
+            time_str = tokens[1]
+            try:
+                # 입력된 'HH:MM' 형태의 시간을 현재 날짜와 결합
+                parsed_time = datetime.strptime(time_str, "%H:%M")
+                # 오늘 날짜에 입력된 시/분을 대입하여 기준 시간 설정
+                base_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
+                
+                # 만약 입력한 시간이 현재 시간보다 미래라면 (혹은 어제 밤 시간 입력 오류 방지 처리가 필요하다면 기본 비교)
+                # 컷 기준 시간 설정 완료
+                start_time = base_time
+            except ValueError:
+                # 시간 형식이 올바르지 않으면 안내 후 무시
+                await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `1000 22:34` 형태로 입력해 주세요)")
+                await bot.process_commands(message)
+                return
+        else:
+            # 시간 입력이 없으면 현재 시간을 기준 시간으로 설정
+            start_time = now
 
-        # 1. 30분 뒤의 유닉스 타임스탬프 계산
-        unix_timestamp = int(time.time()) + spawn_delay
+        # 2. 기준 시간으로부터 30분 뒤의 유닉스 타임스탬프 계산
+        target_time = start_time + timedelta(minutes=30)
+        unix_timestamp = int(target_time.timestamp())
         discord_tag = f"<t:{unix_timestamp}:R>"
 
-        # 2. 컷 확인 메시지 전송
+        # 3. 컷 확인 메시지 전송
+        formatted_start = start_time.strftime("%H시 %M분")
         await message.channel.send(
-            f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다.\n"
+            f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다. ({formatted_start} 기준)\n"
             f"⏳ 다음 최소 젠타임까지 {discord_tag} 남았습니다."
         )
 
-        # 3. 백그라운드에서 30분 대기 (봇이 멈추지 않고 다른 작업 가능)
-        await asyncio.sleep(spawn_delay)
+        # 4. 실제 알림까지 남은 초(second) 계산하여 대기
+        # 과거 시간을 입력했을 경우 바로 알림이 울리도록 max(0, 변수) 처리
+        time_to_wait = max(0, (target_time - datetime.now(kst)).total_seconds())
+        await asyncio.sleep(time_to_wait)
 
-        # 4. 30분 후 @everyone 알림
+        # 5. 30분 후 @everyone 알림
         await message.channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
             f"최소 젠타임(30분)이 시작되었습니다! 채널을 확인해 주세요."
         )
         
-    # 🌟 이 코드가 있어야 기존에 구현된 !최초설정, !투자설정 명령어가 정상 작동합니다.
+    # 기존 명령어들의 정상 작동을 위해 필수 포함
     await bot.process_commands(message)
 
 # ================= [ 코드 끝 부분 ] =================
