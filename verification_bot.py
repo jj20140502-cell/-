@@ -382,17 +382,27 @@ async def on_message(message):
         time_to_wait = (target_time - datetime.now(kst)).total_seconds()
         await asyncio.sleep(max(0, time_to_wait))
 
-        # 4. 시간이 되면 기존 안내 메시지 삭제
+        # 4. 시간이 되면 기존 안내 메시지(📢) 삭제
         try:
             await info_msg.delete()
         except:
             pass
 
-        # 5. 최소 젠타임 시작 알림 전송
-        await log_channel.send(
+        # 5. 최소 젠타임 시작 알림(⚠️) 전송 (변수에 저장)
+        notice_msg = await log_channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
             f"최소 젠타임이 시작되었습니다! 채널을 확인해 주세요."
         )
+        
+        # 6. 🔥 [추가] 30분(1800초) 대기 후 @everyone 알림 메시지도 자동 삭제
+        async def delete_notice_message(msg, delay):
+            await asyncio.sleep(delay)
+            try:
+                await msg.delete()
+            except:
+                pass
+
+        bot.loop.create_task(delete_notice_message(notice_msg, 30 * 60))
         
     await bot.process_commands(message)
 
