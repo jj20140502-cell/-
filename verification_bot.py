@@ -393,7 +393,7 @@ async def on_message(message):
 
         # 6. 🔔 최소 젠타임 정각에 즉시 @everyone 알림 전송 (이 멘션이 채널에 올라옵니다)
         notice_msg = await log_channel.send(
-            f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
+            f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** ({formatted_start} 컷) "
             f"최소 젠타임이 시작되었습니다! 채널을 확인해 주세요."
         )
         
