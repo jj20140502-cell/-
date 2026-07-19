@@ -320,7 +320,7 @@ async def setup_invest(ctx):
     await ctx.send(embed=embed, view=InvestUploadView())
 
 # =========================================================
-# 🌟 [최종 수정을 추천] 실시간 카운트다운 + 정확한 시간 표기 버전
+# 🌟 [최종 수정] 시간 대 연산 오류 수정 및 @everyone 30분 뒤 삭제
 # =========================================================
 # 보스 타임 기록 및 알림이 전송될 채널 ID
 BOSS_LOG_CHANNEL_ID = 1528031320926584872
@@ -335,7 +335,7 @@ async def on_message(message):
     if tokens and tokens[0].isdigit():
         channel_name = tokens[0]
         boss_name = "마뇽"
-        spawn_delay = 160 * 60  # 2시간 40분 = 9600초
+        spawn_delay = 9600  # 2시간 40분 = 9600초
         
         log_channel = message.guild.get_channel(BOSS_LOG_CHANNEL_ID)
         if not log_channel:
@@ -343,15 +343,16 @@ async def on_message(message):
             await bot.process_commands(message)
             return
         
+        # 1. 무조건 한국 시간(KST)을 기준으로 현재 날짜 구하기
         kst = timezone(timedelta(hours=9))
         now = datetime.now(kst)
         
         if len(tokens) >= 2:
             time_str = tokens[1]
             try:
+                # 입력받은 시/분을 현재 한국 날짜와 조합
                 parsed_time = datetime.strptime(time_str, "%H:%M")
-                base_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
-                start_time = base_time
+                start_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
             except ValueError:
                 await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `1000 22:34`)")
                 await bot.process_commands(message)
@@ -359,17 +360,18 @@ async def on_message(message):
         else:
             start_time = now
 
-        # 1. 2시간 40분 뒤의 정확한 목표 시각 계산 및 타임스탬프 변환
+        # 2. 목표 젠타임 시각 계산 (한국시간 기준)
         target_time = start_time + timedelta(seconds=spawn_delay)
+        
+        # 💡 중요: 유닉스 타임스탬프 변환 시 타임존(kst)을 명시하여 시간 밀림 방지
         unix_timestamp = int(target_time.timestamp())
         
-        # 💡 디스코드 내장 기능 활용: :t는 정확한 시각 표기, :R은 실시간 카운트다운
-        exact_time_tag = f"<t:{unix_timestamp}:t>"  # 예: "오전 7:16"
-        countdown_tag = f"<t:{unix_timestamp}:R>"   # 예: "2시간 후" (실시간으로 줄어듬)
+        exact_time_tag = f"<t:{unix_timestamp}:t>"
+        countdown_tag = f"<t:{unix_timestamp}:R>"
 
         formatted_start = start_time.strftime("%H시 %M분")
         
-        # 2. 📢 컷 확인 안내 메시지 전송 (정확한 시간 + 실시간 줄어드는 시계 같이 출력)
+        # 3. 📢 첫 번째 컷 확인 안내 메시지 전송
         info_msg = await log_channel.send(
             f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다. ({formatted_start} 기준)\n"
             f"⏱️ **{exact_time_tag}** 최소 젠타임 시작 예정 ({countdown_tag})"
@@ -378,23 +380,24 @@ async def on_message(message):
         if message.channel.id != BOSS_LOG_CHANNEL_ID:
             await message.add_reaction("✅")
 
-        # 3. 실제 최소 젠타임까지 대기
+        # 4. 한국 표준시 기준으로 정확하게 남은 시간(초) 재계산하여 대기
         time_to_wait = (target_time - datetime.now(kst)).total_seconds()
-        await asyncio.sleep(max(0, time_to_wait))
+        if time_to_wait > 0:
+            await asyncio.sleep(time_to_wait)
 
-        # 4. 시간이 되면 기존 안내 메시지(📢) 삭제
+        # 5. ⏰ 시간이 되면 기존 📢 컷 확인 메시지는 무조건 먼저 삭제
         try:
             await info_msg.delete()
         except:
             pass
 
-        # 5. 최소 젠타임 시작 알림(⚠️) 전송 (변수에 저장)
+        # 6. 🔔 최소 젠타임 정각에 즉시 @everyone 알림 전송 (이 멘션이 채널에 올라옵니다)
         notice_msg = await log_channel.send(
             f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** "
             f"최소 젠타임이 시작되었습니다! 채널을 확인해 주세요."
         )
         
-        # 6. 🔥 [추가] 30분(1800초) 대기 후 @everyone 알림 메시지도 자동 삭제
+        # 7. 🔥 @everyone 메시지가 올라오고 나서 딱 30분(1800초) 뒤에 자동 삭제
         async def delete_notice_message(msg, delay):
             await asyncio.sleep(delay)
             try:
