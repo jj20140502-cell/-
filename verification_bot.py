@@ -447,16 +447,15 @@ class MainVerificationView(View):
 
 
 @bot.event
-
 async def on_ready():
-
     print(f'🤖 가입인증 시스템 가동: {bot.user.name}')
-
+    
+    # 1. 기존 가입인증 및 투자 관련 영구 뷰 등록
     bot.add_view(MainVerificationView())
     bot.add_view(InvestUploadView())
     
-    # 🌟 건의봇용 영구 버튼 뷰 추가 등록! (재부팅 시 버튼 먹통 방지)
-    from Suggestions import MainSuggestionView
+    # 2. 🌟 경로를 cogs.Suggestions로 명확히 지정하여 영구 뷰 등록!
+    from cogs.Suggestions import MainSuggestionView
     bot.add_view(MainSuggestionView())
     
     print("✅ 모든 시스템 영구 버튼(Persistent View) 로드 완료!")
