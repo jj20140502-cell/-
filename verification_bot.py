@@ -23,7 +23,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # 기존 bot 정의 코드 아래에 추가 - 26.07.20 마뇽울음소리 boss.py 파일 추가 부분
 @bot.event
 async def setup_hook():
-    await bot.load_extension("cogs.boss")  # cogs 폴더 안의 boss.py를 불러옴
+    await bot.load_extension("cogs.boss")         # 기존에 잘 작동하던 boss Cog
+    await bot.load_extension("cogs.Suggestions")  # 🌟 이번에 새로 추가할 건의접수함 Cog
 
 # ================= [ ⚙️ 완벽 반영된 서버/채널/역할 ID 설정 ] =================
 
@@ -452,8 +453,13 @@ async def on_ready():
     print(f'🤖 가입인증 시스템 가동: {bot.user.name}')
 
     bot.add_view(MainVerificationView())
-
     bot.add_view(InvestUploadView())
+    
+    # 🌟 건의봇용 영구 버튼 뷰 추가 등록! (재부팅 시 버튼 먹통 방지)
+    from Suggestions import MainSuggestionView
+    bot.add_view(MainSuggestionView())
+    
+    print("✅ 모든 시스템 영구 버튼(Persistent View) 로드 완료!")
 
 
 
