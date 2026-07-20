@@ -20,7 +20,10 @@ intents.members = True  # 유저 별명 변경, 역할 부여, 추방을 위해 
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-
+# 기존 bot 정의 코드 아래에 추가 - 26.07.20 마뇽울음소리 boss.py 파일 추가 부분
+@bot.event
+async def setup_hook():
+    await bot.load_extension("cogs.boss")  # cogs 폴더 안의 boss.py를 불러옴
 
 # ================= [ ⚙️ 완벽 반영된 서버/채널/역할 ID 설정 ] =================
 
