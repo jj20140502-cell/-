@@ -20,11 +20,16 @@ intents.members = True  # 유저 별명 변경, 역할 부여, 추방을 위해 
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 기존 bot 정의 코드 아래에 추가 - 26.07.20 마뇽울음소리 boss.py 파일 추가 부분
+# 기존 bot 정의 코드 아래에 추가
 @bot.event
 async def setup_hook():
-    await bot.load_extension("cogs.boss")         # 기존에 잘 작동하던 boss Cog
-    await bot.load_extension("cogs.Suggestions")  # 🌟 이번에 새로 추가할 건의접수함 Cog
+    await bot.load_extension("cogs.boss")         # 기존 boss Cog
+    await bot.load_extension("cogs.Suggestions")  # 건의접수함 Cog
+    await bot.load_extension("cogs.calculator")   # 계산기 Cog 
+    
+    # 🟢 모든 Cog 로드가 끝난 후 맨 밑에 슬래시 명령어 동기화 추가!
+    await bot.tree.sync()
+    print("✅ 모든 Cog 로드 및 슬래시 명령어 동기화 완료!")
 
 # ================= [ ⚙️ 완벽 반영된 서버/채널/역할 ID 설정 ] =================
 
