@@ -67,8 +67,7 @@ class BossTimer(commands.Cog):
             # 1단계: 최초 제보 ~ 최소 젠타임(2시간 30분) 대기
             # ---------------------------------------------------------
             info_msg = await log_channel.send(
-                f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인되었습니다. ({formatted_start} 기준)\n"
-                f"⏱️ **<t:{min_unix}:t>** 최소 젠타임 시작 예정 (<t:{min_unix}:R>)"
+                f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인 ({formatted_start} 기준) | ⏱️ **<t:{min_unix}:t>** 최소 젠타임 시작 예정 (<t:{min_unix}:R>)"
             )
 
             time_to_min = (min_target - datetime.now(kst)).total_seconds()
@@ -100,9 +99,7 @@ class BossTimer(commands.Cog):
             # 3단계: 평균 젠타임 경과 + 최대 젠타임(4시간 00분) 카운트다운
             # ---------------------------------------------------------
             max_msg = await log_channel.send(
-                f"⌛ **[{channel_name} 채널] {boss_name}** ({formatted_start} 컷)\n"
-                f"평균 젠타임이 지났습니다.\n"
-                f"🚨 **<t:{max_unix}:t>** 최대 젠타임(젠 확정)까지 (<t:{max_unix}:R>)"
+                f" **[{channel_name} 채널] {boss_name}** ({formatted_start} 컷) 평균 젠타임 경과 | **<t:{max_unix}:t>** 최대 젠타임(젠 확정)까지 (<t:{max_unix}:R>)"
             )
 
             time_to_max = (max_target - datetime.now(kst)).total_seconds()
