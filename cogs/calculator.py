@@ -26,7 +26,10 @@ EXP_TABLE = [
     264827165, 279339693, 294647508, 310794191, 327825712, 345790561, 364739883, 384727628, 405810702, 428049128,
     451506220, 476248760, 502347192, 529875818, 558913012, 589541445, 621848316, 655925603, 691870326, 729784819,
     769777027, 811960808, 856456260, 903390063, 952895838, 1005114529, 1060194805, 1118293480, 1179575962, 1244216724,
-    1312399800, 1384319309, 1460180007, 1540197871, 1624600714, 1713628833, 1807535693, 1906588648, 2011069705, 2121276324
+    1312399800, 1384319309, 1460180007, 1540197871, 1624600714, 1713628833, 1807535693, 1906588648, 2011069705, 2121276324,
+    # 🟢 201 ~ 220 레벨 확장 경험치 추가
+    5027674262, 5681271916, 6419837265, 7254416109, 8197490203, 9263163929, 10467375239, 11828134020, 13365791442, 15103344329,
+    22503983050, 24529341524, 26736982261, 29143310664, 31766208623, 34625167399, 37741432464, 41138161385, 44840595909, 48876249540
 ]
 
 def parse_numeric_input(text: str, ref_exp: int = 0):
@@ -90,10 +93,10 @@ def parse_item_input(text: str):
 
 # --- 모달 클래스 정의 ---
 class ExpModal(Modal, title="📊 레벨업 시뮬레이터"):
-    현재레벨 = TextInput(label="현재 레벨 (1~199)", placeholder="예: 195", required=True)
+    현재레벨 = TextInput(label="현재 레벨 (1~219)", placeholder="예: 195", required=True)
     현재경험치 = TextInput(label="현재 경험치 (만 단위 또는 %)", placeholder="예: 5500만 또는 33.33%", required=True)
-    목표레벨 = TextInput(label="목표 레벨 (2~200)", placeholder="예: 200", required=True)
-    시간당경험치 = TextInput(label="시간당 사냥 경험치 (선택)", placeholder="예: 8000만", required=False)
+    목표레벨 = TextInput(label="목표 레벨 (2~220)", placeholder="예: 200", required=True)
+    시간당경험치 = TextInput(label="시간당 사냥 경험치 (선택)", placeholder="예: 1억8000", required=False)
     보스경험치요약 = TextInput(label="보스경험치/처치횟수 (선택)", placeholder="예: 500만/12", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -103,8 +106,8 @@ class ExpModal(Modal, title="📊 레벨업 시뮬레이터"):
         except ValueError:
             await interaction.response.send_message("레벨은 숫자만 입력해주세요.", ephemeral=True)
             return
-        if cur_lvl >= tar_lvl or cur_lvl < 1 or tar_lvl > 200:
-            await interaction.response.send_message("레벨 범위가 올바르지 않습니다. (1~200)", ephemeral=True)
+        if cur_lvl >= tar_lvl or cur_lvl < 1 or tar_lvl > 220:
+            await interaction.response.send_message("레벨 범위가 올바르지 않습니다. (1~220)", ephemeral=True)
             return
 
         level_max_exp = EXP_TABLE[cur_lvl]
