@@ -28,8 +28,8 @@ class BossTimer(commands.Cog):
             boss_name = "마뇽"
             
             # ⏱️ 시간 설정 (초 단위)
-            min_delay = 9000      # 최소 젠타임: 2시간 30분 (9000초)
-            avg_delay = 10020     # 평균 젠타임: 2시간 47분 (10020초)
+            min_delay = 7200      # 최소 젠타임: 2시간 00분 (7200초)
+            avg_delay = 9000     # 평균 젠타임: 2시간 30분 (9000초)
             max_delay = 14400     # 최대 젠타임: 4시간 00분 (14400초)
             
             log_channel = message.guild.get_channel(BOSS_LOG_CHANNEL_ID)
@@ -64,7 +64,7 @@ class BossTimer(commands.Cog):
             max_unix = int(max_target.timestamp())
 
             # ---------------------------------------------------------
-            # 1단계: 최초 제보 ~ 최소 젠타임(2시간 30분) 대기
+            # 1단계: 최초 제보 ~ 최소 젠타임(2시간 00분) 대기
             # ---------------------------------------------------------
             info_msg = await log_channel.send(
                 f"📢 **[{channel_name} 채널] {boss_name}** 컷 확인 ({formatted_start} 기준) | ⏱️ **<t:{min_unix}:t>** 최소 젠타임 시작 예정 (<t:{min_unix}:R>)"
@@ -79,7 +79,7 @@ class BossTimer(commands.Cog):
                 pass
 
             # ---------------------------------------------------------
-            # 2단계: 최소 젠타임 시작 알림 + 평균 젠타임(2시간 47분) 카운트다운
+            # 2단계: 최소 젠타임 시작 알림 + 평균 젠타임(2시간 30분) 카운트다운
             # ---------------------------------------------------------
             avg_msg = await log_channel.send(
                 f"⚠️ @everyone **[{channel_name} 채널] {boss_name}** ({formatted_start} 컷)\n"
