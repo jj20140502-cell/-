@@ -28,7 +28,7 @@ class BossTimer(commands.Cog):
             boss_name = "마뇽"
             
             # ⏱️ 시간 설정 (초 단위)
-            min_delay = 7200      # 최소 젠타임: 2시간 00분 (7200초)
+            min_delay = 7800      # 최소 젠타임: 2시간 10분 (7800초)
             avg_delay = 9000     # 평균 젠타임: 2시간 30분 (9000초)
             max_delay = 14400     # 최대 젠타임: 4시간 00분 (14400초)
             
