@@ -19,7 +19,7 @@ class BossKillModal(discord.ui.Modal, title="⚔️ 마뇽다이 제보"):
     )
     time_input = discord.ui.TextInput(
         label="잡은 시간 (미입력 시 현재 시각)",
-        placeholder="예: 15:19 (비워두면 현재 시각 자동 입력)",
+        placeholder="예: 17:47 (비워두면 현재 시각 자동 입력)",
         required=False,
         max_length=5
     )
@@ -41,16 +41,13 @@ class BossKillModal(discord.ui.Modal, title="⚔️ 마뇽다이 제보"):
                 parsed_time = datetime.strptime(time_str, "%H:%M")
                 start_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
             except ValueError:
-                await interaction.response.send_message("⚠️ 시간 형식이 올바르지 않습니다. (예: `15:19`)", ephemeral=True)
+                await interaction.response.send_message("⚠️ 시간 형식이 올바르지 않습니다. (예: `17:47`)", ephemeral=True)
                 return
         else:
             start_time = now
 
-        formatted_start = start_time.strftime("%H시 %M분")
-        await interaction.response.send_message(
-            f"✅ **[{channel_name} 채널]** {formatted_start} 컷 등록 완료!",
-            ephemeral=True
-        )
+        # 등록 완료 메시지 응답 대신 팝업만 즉시 창 닫기
+        await interaction.response.defer()
 
         # 타이머 시작
         cog = self.bot.get_cog("BossTimer")
@@ -89,10 +86,7 @@ class BossKillView(discord.ui.View):
         kst = timezone(timedelta(hours=9))
         kill_time = datetime.now(kst)
 
-        await interaction.response.send_message(
-            f"⚔️ **[{self.channel_name} 채널] {self.boss_name}** 잡힘 확인! ({kill_time.strftime('%H시 %M분')} 기준 재기록 시작)",
-            ephemeral=True
-        )
+        await interaction.response.defer()
 
         cog = self.bot.get_cog("BossTimer")
         if cog:
@@ -115,10 +109,7 @@ class BossKillView(discord.ui.View):
         except:
             pass
 
-        await interaction.response.send_message(
-            f"❌ **[{self.channel_name} 채널]** {self.boss_name} 제보가 오제보 처리되어 타이머가 취소되었습니다.",
-            ephemeral=True
-        )
+        await interaction.response.defer()
 
 
 # ---------------------------------------------------------
@@ -193,7 +184,6 @@ class BossTimer(commands.Cog):
             return_when=asyncio.FIRST_COMPLETED
         )
 
-        # 마뇽다이(재기록) 또는 오제보(취소)가 선택된 경우 알림 취소 후 종료
         if view1.action in ["kill", "cancel"]:
             return
 
@@ -254,7 +244,7 @@ class BossTimer(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        """기존 채팅 제보 방식(132 15:19) 하위 호환 유지"""
+        """기존 채팅 제보 방식(132 17:47) 하위 호환 유지"""
         if message.author == self.bot.user:
             return
 
@@ -276,7 +266,7 @@ class BossTimer(commands.Cog):
                     parsed_time = datetime.strptime(time_str, "%H:%M")
                     start_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
                 except ValueError:
-                    await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `1000 22:34`)")
+                    await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `17:47`)")
                     return
             else:
                 start_time = now
