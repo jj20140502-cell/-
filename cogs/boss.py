@@ -46,7 +46,7 @@ class BossKillModal(discord.ui.Modal, title="⚔️ 마뇽다이 제보"):
         else:
             start_time = now
 
-        # 등록 완료 메시지 응답 대신 팝업만 즉시 창 닫기
+        # 등록 완료 메시지 대신 팝업창만 깔끔하게 닫기
         await interaction.response.defer()
 
         # 타이머 시작
@@ -244,12 +244,13 @@ class BossTimer(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        """기존 채팅 제보 방식(132 17:47) 하위 호환 유지"""
+        """기존 채팅 제보 방식 (예: 111 23:30 또는 111) 연동"""
         if message.author == self.bot.user:
             return
 
         tokens = message.content.split()
 
+        # 숫자로 시작하는 채팅 제보 확인
         if tokens and tokens[0].isdigit():
             if message.channel.id != BOSS_LOG_CHANNEL_ID:
                 return
@@ -266,11 +267,12 @@ class BossTimer(commands.Cog):
                     parsed_time = datetime.strptime(time_str, "%H:%M")
                     start_time = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
                 except ValueError:
-                    await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `17:47`)")
+                    await message.channel.send("⚠️ 시간 형식이 올바르지 않습니다. (예: `111 23:30`)")
                     return
             else:
                 start_time = now
 
+            # 버튼 방식과 동일하게 타이머 시작
             asyncio.create_task(
                 self.start_boss_timer(
                     channel=message.channel,
