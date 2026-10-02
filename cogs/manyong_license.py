@@ -46,6 +46,62 @@ class LicenseRequestView(discord.ui.View):
         await self.cog.submit_request(i)
 
 
+class ThreadManageView(discord.ui.View):
+    """신청자별 운영진 관리 패널."""
+    def __init__(self, cog, uid: int):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.uid = int(uid)
+        for item in self.children:
+            if item.custom_id:
+                item.custom_id = f"{item.custom_id}:{self.uid}"
+
+    @discord.ui.button(label="승인", emoji="✅", style=discord.ButtonStyle.green,
+                       custom_id="manyong_thread_approve")
+    async def approve_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.issue(i, self.uid)
+        await self.cog.after_thread_action(i, self.uid, "✅ 라이선스 승인")
+
+    @discord.ui.button(label="거절", emoji="❌", style=discord.ButtonStyle.red,
+                       custom_id="manyong_thread_reject")
+    async def reject_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.reject(i, self.uid)
+        await self.cog.after_thread_action(i, self.uid, "❌ 신청 거절")
+
+    @discord.ui.button(label="차단", emoji="🔴", style=discord.ButtonStyle.danger,
+                       custom_id="manyong_thread_block")
+    async def block_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_block(i, self.uid)
+
+    @discord.ui.button(label="차단해제", emoji="🟢", style=discord.ButtonStyle.success,
+                       custom_id="manyong_thread_unblock")
+    async def unblock_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_unblock(i, self.uid)
+
+    @discord.ui.button(label="기기초기화", emoji="♻️", style=discord.ButtonStyle.secondary,
+                       custom_id="manyong_thread_reset")
+    async def reset_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_reset_device(i, self.uid)
+
+    @discord.ui.button(label="재발급", emoji="🔄", style=discord.ButtonStyle.primary,
+                       custom_id="manyong_thread_reissue")
+    async def reissue_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_reissue(i, self.uid)
+
+    @discord.ui.button(label="상태 새로고침", emoji="📋", style=discord.ButtonStyle.secondary,
+                       custom_id="manyong_thread_refresh")
+    async def refresh_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.refresh_thread_card(i.guild, self.uid)
+        await i.response.send_message("📋 상태 카드를 새로고침했습니다.", ephemeral=True)
+
+
 class ApprovalView(discord.ui.View):
     def __init__(self, cog, uid):
         super().__init__(timeout=86400)
@@ -94,13 +150,27 @@ class ManyongLicense(commands.Cog):
               activated_at TIMESTAMPTZ,
               updated_at TIMESTAMPTZ DEFAULT NOW()
             )""")
+            await c.execute(
+                "ALTER TABLE manyong_licenses ADD COLUMN IF NOT EXISTS thread_id BIGINT"
+            )
+            await c.execute(
+                "ALTER TABLE manyong_licenses ADD COLUMN IF NOT EXISTS manage_message_id BIGINT"
+            )
+
+        # 기존 관리 스레드의 버튼도 Render 재시작 후 계속 동작하도록 복원
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT discord_id FROM manyong_licenses WHERE thread_id IS NOT NULL"
+            )
+        for r in rows:
+            self.bot.add_view(ThreadManageView(self, int(r["discord_id"])))
 
     async def row(self, uid):
         async with self.pool.acquire() as c:
             return await c.fetchrow("SELECT * FROM manyong_licenses WHERE discord_id=$1", uid)
 
     async def submit_request(self, i):
-        """버튼/명령 공통 라이선스 신청 처리."""
+        """버튼/명령 공통 라이선스 신청 처리 + 운영진 관리 스레드 생성."""
         if i.channel_id != LICENSE_REQUEST_CHANNEL_ID:
             await i.response.send_message(
                 f"❌ 라이선스 신청은 <#{LICENSE_REQUEST_CHANNEL_ID}> 채널에서만 가능합니다.",
@@ -120,9 +190,16 @@ class ManyongLicense(commands.Cog):
             return
 
         async with self.pool.acquire() as c:
-            await c.execute("""INSERT INTO manyong_licenses(discord_id,discord_name,status,requested_at,updated_at)
-            VALUES($1,$2,'pending',NOW(),NOW()) ON CONFLICT(discord_id) DO UPDATE SET
-            discord_name=$2,status='pending',requested_at=NOW(),updated_at=NOW()""", i.user.id, str(i.user))
+            await c.execute(
+                """INSERT INTO manyong_licenses
+                   (discord_id,discord_name,status,license_key_hash,device_hash,
+                    requested_at,updated_at,thread_id,manage_message_id)
+                   VALUES($1,$2,'pending',NULL,NULL,NOW(),NOW(),NULL,NULL)
+                   ON CONFLICT(discord_id) DO UPDATE SET
+                   discord_name=$2,status='pending',license_key_hash=NULL,device_hash=NULL,
+                   requested_at=NOW(),updated_at=NOW(),thread_id=NULL,manage_message_id=NULL""",
+                i.user.id, str(i.user)
+            )
 
         ch = i.guild.get_channel(LICENSE_CHANNEL_ID) if LICENSE_CHANNEL_ID else None
         if not ch:
@@ -131,16 +208,167 @@ class ManyongLicense(commands.Cog):
 
         e = discord.Embed(
             title="🐉 마뇽 감지기 라이선스 신청",
-            description="새 라이선스 신청이 접수되었습니다.",
+            description=(
+                f"신청자: {i.user.mention}\n"
+                f"Discord ID: `{i.user.id}`\n\n"
+                "아래 생성된 스레드에서 라이선스를 관리하세요."
+            ),
             color=discord.Color.blurple(),
         )
-        e.add_field(name="신청자", value=i.user.mention, inline=False)
-        e.add_field(name="Discord ID", value=str(i.user.id), inline=False)
-        await ch.send(embed=e, view=ApprovalView(self, i.user.id))
+        parent = await ch.send(embed=e)
+
+        thread = await parent.create_thread(
+            name=f"🔑 {i.user.display_name[:70]}님의 마뇽 라이선스",
+            auto_archive_duration=10080,
+        )
+
+        manage_msg = await thread.send(
+            embed=await self.make_thread_embed(i.user.id),
+            view=ThreadManageView(self, i.user.id),
+        )
+
+        async with self.pool.acquire() as c:
+            await c.execute(
+                "UPDATE manyong_licenses SET thread_id=$1,manage_message_id=$2,updated_at=NOW() "
+                "WHERE discord_id=$3",
+                thread.id, manage_msg.id, i.user.id
+            )
+
+        self.bot.add_view(ThreadManageView(self, i.user.id))
+        await thread.send(
+            "📌 이 스레드에서 승인·거절·차단·차단해제·기기초기화·재발급을 관리합니다."
+        )
+
         await i.response.send_message(
             "✅ 라이선스 신청이 접수되었습니다. 운영진 승인을 기다려 주세요.",
             ephemeral=True,
         )
+
+    def status_label(self, status):
+        return {
+            "pending": "🟡 승인 대기",
+            "active": "🟢 활성",
+            "blocked": "🔴 차단",
+            "rejected": "⚫ 거절",
+        }.get(status, status)
+
+    async def make_thread_embed(self, uid):
+        r = await self.row(uid)
+        if not r:
+            return discord.Embed(title="라이선스 기록 없음", color=discord.Color.dark_grey())
+
+        colors = {
+            "pending": discord.Color.gold(),
+            "active": discord.Color.green(),
+            "blocked": discord.Color.red(),
+            "rejected": discord.Color.dark_grey(),
+        }
+        e = discord.Embed(
+            title="🐉 마뇽 감지기 라이선스 관리",
+            color=colors.get(r["status"], discord.Color.blurple()),
+        )
+        e.add_field(name="사용자", value=f"<@{uid}>", inline=False)
+        e.add_field(name="상태", value=self.status_label(r["status"]), inline=True)
+        e.add_field(name="PC 등록", value="🖥️ 등록됨" if r["device_hash"] else "➖ 미등록", inline=True)
+        e.add_field(name="키", value="🔑 발급됨" if r["license_key_hash"] else "➖ 미발급", inline=True)
+        e.set_footer(text="버튼 동작 후 상태가 자동 갱신됩니다.")
+        return e
+
+    async def get_manage_thread(self, guild, uid):
+        r = await self.row(uid)
+        if not r or not r["thread_id"]:
+            return None
+        thread = guild.get_thread(int(r["thread_id"]))
+        if thread:
+            return thread
+        try:
+            ch = await guild.fetch_channel(int(r["thread_id"]))
+            return ch if isinstance(ch, discord.Thread) else None
+        except Exception:
+            return None
+
+    async def refresh_thread_card(self, guild, uid):
+        r = await self.row(uid)
+        if not r or not r["manage_message_id"]:
+            return
+        thread = await self.get_manage_thread(guild, uid)
+        if not thread:
+            return
+        try:
+            msg = await thread.fetch_message(int(r["manage_message_id"]))
+            await msg.edit(embed=await self.make_thread_embed(uid),
+                           view=ThreadManageView(self, uid))
+        except Exception:
+            pass
+
+    async def after_thread_action(self, i, uid, action_text):
+        await self.refresh_thread_card(i.guild, uid)
+        thread = await self.get_manage_thread(i.guild, uid)
+        if thread:
+            try:
+                await thread.send(f"{action_text}\n담당 운영진: {i.user.mention}")
+            except Exception:
+                pass
+
+    async def thread_block(self, i, uid):
+        async with self.pool.acquire() as c:
+            result = await c.execute(
+                "UPDATE manyong_licenses SET status='blocked',updated_at=NOW() WHERE discord_id=$1", uid)
+        await i.response.send_message(
+            "❌ 기록이 없습니다." if result == "UPDATE 0" else "🔴 라이선스를 차단했습니다.",
+            ephemeral=True)
+        if result != "UPDATE 0":
+            await self.after_thread_action(i, uid, "🔴 라이선스 차단")
+
+    async def thread_unblock(self, i, uid):
+        r = await self.row(uid)
+        if not r:
+            await i.response.send_message("❌ 기록이 없습니다.", ephemeral=True); return
+        if r["status"] != "blocked":
+            await i.response.send_message("ℹ️ 현재 차단 상태가 아닙니다.", ephemeral=True); return
+        if not r["license_key_hash"]:
+            await i.response.send_message("❌ 기존 키가 없어 재발급이 필요합니다.", ephemeral=True); return
+        async with self.pool.acquire() as c:
+            await c.execute(
+                "UPDATE manyong_licenses SET status='active',updated_at=NOW() WHERE discord_id=$1", uid)
+        await i.response.send_message("🟢 차단을 해제했습니다.", ephemeral=True)
+        await self.after_thread_action(i, uid, "🟢 라이선스 차단 해제")
+
+    async def thread_reset_device(self, i, uid):
+        async with self.pool.acquire() as c:
+            result = await c.execute(
+                "UPDATE manyong_licenses SET device_hash=NULL,activated_at=NULL,updated_at=NOW() "
+                "WHERE discord_id=$1", uid)
+        await i.response.send_message(
+            "❌ 기록이 없습니다." if result == "UPDATE 0"
+            else "♻️ 기기 등록을 초기화했습니다.",
+            ephemeral=True)
+        if result != "UPDATE 0":
+            await self.after_thread_action(i, uid, "♻️ 등록 기기 초기화")
+
+    async def thread_reissue(self, i, uid):
+        r = await self.row(uid)
+        if not r:
+            await i.response.send_message("❌ 기록이 없습니다.", ephemeral=True); return
+        key = new_key()
+        async with self.pool.acquire() as c:
+            await c.execute(
+                "UPDATE manyong_licenses SET license_key_hash=$1,status='active',"
+                "device_hash=NULL,activated_at=NULL,approved_at=NOW(),approved_by=$2,updated_at=NOW() "
+                "WHERE discord_id=$3", key_hash(key), i.user.id, uid)
+        member = i.guild.get_member(uid)
+        sent = False
+        if member:
+            try:
+                await member.send(f"🐉 새 마뇽 감지기 라이선스 키: `{key}`")
+                sent = True
+            except discord.Forbidden:
+                pass
+        await i.response.send_message(
+            "🔄 재발급 완료. DM 전송 완료." if sent
+            else f"🔄 재발급 완료. DM 실패 — 키: `{key}`",
+            ephemeral=True)
+        await self.after_thread_action(i, uid, "🔄 라이선스 재발급")
 
     async def issue(self, i, uid):
         r = await self.row(uid)
@@ -311,6 +539,69 @@ class ManyongLicense(commands.Cog):
         async with self.pool.acquire() as c:
             r=await c.execute("UPDATE manyong_licenses SET status='blocked',updated_at=NOW() WHERE discord_id=$1",사용자.id)
         await i.response.send_message("등록 기록이 없습니다." if r=="UPDATE 0" else f"🔴 {사용자.mention} 차단 완료.",ephemeral=True)
+
+    @app_commands.command(name="마뇽인증_차단해제", description="차단된 라이선스를 다시 활성화합니다.")
+    @app_commands.guild_only()
+    async def unblock_cmd(self, i, discord_id: str = ""):
+        if not await admin_check(i):
+            return
+
+        if not discord_id.strip():
+            await i.response.send_message(
+                "❌ 차단을 해제할 사용자의 Discord ID를 숫자로 입력해 주세요.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            target_id = int(discord_id.strip())
+        except ValueError:
+            await i.response.send_message(
+                "❌ Discord ID는 숫자로 입력해 주세요.",
+                ephemeral=True,
+            )
+            return
+
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow(
+                "SELECT status, license_key_hash, device_hash "
+                "FROM manyong_licenses WHERE discord_id=$1",
+                target_id,
+            )
+
+            if not row:
+                await i.response.send_message(
+                    "❌ 해당 Discord ID의 라이선스 기록이 없습니다.",
+                    ephemeral=True,
+                )
+                return
+
+            if row["status"] != "blocked":
+                await i.response.send_message(
+                    f"ℹ️ 현재 상태는 `{row['status']}`입니다. 차단된 라이선스만 해제할 수 있습니다.",
+                    ephemeral=True,
+                )
+                return
+
+            if not row["license_key_hash"]:
+                await i.response.send_message(
+                    "❌ 기존 라이선스 키 정보가 없어 차단해제할 수 없습니다. 재발급을 사용해 주세요.",
+                    ephemeral=True,
+                )
+                return
+
+            await c.execute(
+                "UPDATE manyong_licenses "
+                "SET status='active', updated_at=NOW() "
+                "WHERE discord_id=$1",
+                target_id,
+            )
+
+        await i.response.send_message(
+            f"🟢 <@{target_id}>의 라이선스 차단을 해제했습니다.\n"
+            "기존 라이선스 키와 등록 PC 정보는 그대로 유지됩니다.",
+            ephemeral=True,
+        )
 
     @app_commands.command(name="마뇽인증_기기초기화", description="등록 PC 정보를 초기화합니다.")
     @app_commands.guild_only()
