@@ -46,6 +46,78 @@ class LicenseRequestView(discord.ui.View):
         await self.cog.submit_request(i)
 
 
+class DeleteLicenseConfirmView(discord.ui.View):
+    def __init__(self, cog, target_id: int, requester_id: int):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.target_id = int(target_id)
+        self.requester_id = int(requester_id)
+
+    @discord.ui.button(label="라이선스 완전 삭제", emoji="🗑️",
+                       style=discord.ButtonStyle.danger)
+    async def confirm_delete(self, i, b):
+        if i.user.id != self.requester_id:
+            await i.response.send_message(
+                "❌ 이 확인 버튼은 명령을 실행한 운영진만 사용할 수 있습니다.",
+                ephemeral=True,
+            )
+            return
+        if not await admin_check(i):
+            return
+
+        row = await self.cog.row(self.target_id)
+        if not row:
+            await i.response.send_message(
+                "ℹ️ 이미 삭제되었거나 기록이 없습니다.",
+                ephemeral=True,
+            )
+            return
+
+        thread_id = row["thread_id"] if "thread_id" in row else None
+
+        async with self.cog.pool.acquire() as c:
+            await c.execute(
+                "DELETE FROM manyong_licenses WHERE discord_id=$1",
+                self.target_id,
+            )
+
+        await i.response.edit_message(
+            content=(
+                f"🗑️ <@{self.target_id}>의 라이선스 기록을 완전히 삭제했습니다.\n"
+                "기존 키·PC 귀속·상태가 모두 폐기되었으며 다시 신청할 수 있습니다."
+            ),
+            view=None,
+        )
+
+        # 관리 스레드가 있으면 삭제 사실을 남긴 뒤 잠금/보관.
+        if thread_id:
+            try:
+                thread = i.guild.get_thread(int(thread_id))
+                if thread is None:
+                    thread = await i.guild.fetch_channel(int(thread_id))
+                if isinstance(thread, discord.Thread):
+                    await thread.send(
+                        f"🗑️ 라이선스 기록 완전 삭제\n담당 운영진: {i.user.mention}"
+                    )
+                    await thread.edit(archived=True, locked=True)
+            except Exception:
+                pass
+
+    @discord.ui.button(label="취소", emoji="✖️",
+                       style=discord.ButtonStyle.secondary)
+    async def cancel_delete(self, i, b):
+        if i.user.id != self.requester_id:
+            await i.response.send_message(
+                "❌ 이 확인 버튼은 명령을 실행한 운영진만 사용할 수 있습니다.",
+                ephemeral=True,
+            )
+            return
+        await i.response.edit_message(
+            content="삭제를 취소했습니다.",
+            view=None,
+        )
+
+
 class ThreadManageView(discord.ui.View):
     """신청자별 운영진 관리 패널."""
     def __init__(self, cog, uid: int):
@@ -438,6 +510,52 @@ class ManyongLicense(commands.Cog):
         await i.channel.send(embed=embed, view=LicenseRequestView(self))
         await i.response.send_message(
             "✅ 라이선스 신청 버튼을 이 채널에 설치했습니다.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="마뇽인증_삭제",
+        description="사용자의 라이선스 기록을 완전히 삭제합니다.",
+    )
+    @app_commands.guild_only()
+    async def delete_license(
+        self,
+        i: discord.Interaction,
+        discord_id: str = "",
+    ):
+        if not await admin_check(i):
+            return
+
+        # 비워두면 명령 실행자 본인 대상으로 사용 가능 (테스트 편의)
+        target_id = i.user.id
+        if discord_id.strip():
+            try:
+                target_id = int(discord_id.strip())
+            except ValueError:
+                await i.response.send_message(
+                    "❌ Discord ID는 숫자로 입력해 주세요.",
+                    ephemeral=True,
+                )
+                return
+
+        row = await self.row(target_id)
+        if not row:
+            await i.response.send_message(
+                "ℹ️ 해당 Discord ID의 라이선스 기록이 없습니다.",
+                ephemeral=True,
+            )
+            return
+
+        await i.response.send_message(
+            (
+                f"⚠️ 정말 <@{target_id}>의 라이선스를 **완전히 삭제**할까요?\n\n"
+                "• 기존 라이선스 키 폐기\n"
+                "• 등록 PC 정보 삭제\n"
+                "• 승인/차단 상태 삭제\n"
+                "• 이후 새 라이선스 신청 가능\n\n"
+                "**이 작업은 되돌릴 수 없습니다.**"
+            ),
+            view=DeleteLicenseConfirmView(self, target_id, i.user.id),
             ephemeral=True,
         )
 
