@@ -213,6 +213,66 @@ class ManyongLicense(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(
+        name="마뇽인증_신청초기화",
+        description="삭제된 승인카드 등으로 막힌 대기 신청을 초기화합니다.",
+    )
+    @app_commands.guild_only()
+    async def reset_pending_request(
+        self,
+        i: discord.Interaction,
+        discord_id: str = "",
+    ):
+        if not await admin_check(i):
+            return
+
+        # ID를 비워두면 명령 실행자 본인의 신청을 초기화.
+        # 사용자 선택 UI 문제를 피하기 위해 Discord ID 직접 입력도 지원.
+        target_id = i.user.id
+        if discord_id.strip():
+            try:
+                target_id = int(discord_id.strip())
+            except ValueError:
+                await i.response.send_message(
+                    "❌ Discord ID는 숫자로 입력해 주세요.",
+                    ephemeral=True,
+                )
+                return
+
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow(
+                "SELECT status FROM manyong_licenses WHERE discord_id=$1",
+                target_id,
+            )
+
+            if not row:
+                await i.response.send_message(
+                    "ℹ️ 해당 Discord ID의 신청 기록이 없습니다.",
+                    ephemeral=True,
+                )
+                return
+
+            if row["status"] != "pending":
+                await i.response.send_message(
+                    f"ℹ️ 현재 상태는 `{row['status']}`입니다. "
+                    "승인 대기(pending) 신청만 초기화할 수 있습니다.",
+                    ephemeral=True,
+                )
+                return
+
+            await c.execute(
+                "DELETE FROM manyong_licenses "
+                "WHERE discord_id=$1 AND status='pending'",
+                target_id,
+            )
+
+        await i.response.send_message(
+            f"♻️ <@{target_id}>의 승인 대기 신청을 초기화했습니다.\n"
+            "이제 `감지기 라이선스` 채널의 **🔑 라이선스 신청** 버튼을 "
+            "다시 누르면 새 승인/거절 카드가 생성됩니다.",
+            ephemeral=True,
+        )
+
     @app_commands.command(name="마뇽인증_목록", description="라이선스 목록을 확인합니다.")
     @app_commands.guild_only()
     async def list_cmd(self, i):
