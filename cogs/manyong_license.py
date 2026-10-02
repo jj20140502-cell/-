@@ -30,6 +30,22 @@ async def admin_check(i):
     await i.response.send_message("❌ 서버 소유자 또는 지정 운영진 역할 보유자만 사용할 수 있습니다.", ephemeral=True)
     return False
 
+class LicenseRequestView(discord.ui.View):
+    """Render/봇 재시작 후에도 유지되는 길드원 신청 버튼."""
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="라이선스 신청",
+        emoji="🔑",
+        style=discord.ButtonStyle.green,
+        custom_id="manyong_license_request_v1",
+    )
+    async def request_button(self, i: discord.Interaction, button: discord.ui.Button):
+        await self.cog.submit_request(i)
+
+
 class ApprovalView(discord.ui.View):
     def __init__(self, cog, uid):
         super().__init__(timeout=86400)
@@ -60,6 +76,10 @@ class ManyongLicense(commands.Cog):
         if not DATABASE_URL:
             raise RuntimeError("DATABASE_URL 환경변수가 없습니다.")
         self.pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
+
+        # 재시작 후에도 기존 '라이선스 신청' 버튼이 계속 작동하도록 등록
+        self.bot.add_view(LicenseRequestView(self))
+
         async with self.pool.acquire() as c:
             await c.execute("""
             CREATE TABLE IF NOT EXISTS manyong_licenses(
@@ -78,6 +98,49 @@ class ManyongLicense(commands.Cog):
     async def row(self, uid):
         async with self.pool.acquire() as c:
             return await c.fetchrow("SELECT * FROM manyong_licenses WHERE discord_id=$1", uid)
+
+    async def submit_request(self, i):
+        """버튼/명령 공통 라이선스 신청 처리."""
+        if i.channel_id != LICENSE_REQUEST_CHANNEL_ID:
+            await i.response.send_message(
+                f"❌ 라이선스 신청은 <#{LICENSE_REQUEST_CHANNEL_ID}> 채널에서만 가능합니다.",
+                ephemeral=True,
+            )
+            return
+
+        r = await self.row(i.user.id)
+        if r and r["status"] == "active":
+            await i.response.send_message("ℹ️ 이미 활성 라이선스가 있습니다.", ephemeral=True)
+            return
+        if r and r["status"] == "blocked":
+            await i.response.send_message("❌ 차단된 라이선스입니다. 운영진에게 문의해 주세요.", ephemeral=True)
+            return
+        if r and r["status"] == "pending":
+            await i.response.send_message("⏳ 이미 승인 대기 중입니다.", ephemeral=True)
+            return
+
+        async with self.pool.acquire() as c:
+            await c.execute("""INSERT INTO manyong_licenses(discord_id,discord_name,status,requested_at,updated_at)
+            VALUES($1,$2,'pending',NOW(),NOW()) ON CONFLICT(discord_id) DO UPDATE SET
+            discord_name=$2,status='pending',requested_at=NOW(),updated_at=NOW()""", i.user.id, str(i.user))
+
+        ch = i.guild.get_channel(LICENSE_CHANNEL_ID) if LICENSE_CHANNEL_ID else None
+        if not ch:
+            await i.response.send_message("⚠️ 승인 채널이 아직 설정되지 않았습니다.", ephemeral=True)
+            return
+
+        e = discord.Embed(
+            title="🐉 마뇽 감지기 라이선스 신청",
+            description="새 라이선스 신청이 접수되었습니다.",
+            color=discord.Color.blurple(),
+        )
+        e.add_field(name="신청자", value=i.user.mention, inline=False)
+        e.add_field(name="Discord ID", value=str(i.user.id), inline=False)
+        await ch.send(embed=e, view=ApprovalView(self, i.user.id))
+        await i.response.send_message(
+            "✅ 라이선스 신청이 접수되었습니다. 운영진 승인을 기다려 주세요.",
+            ephemeral=True,
+        )
 
     async def issue(self, i, uid):
         r = await self.row(uid)
@@ -109,33 +172,46 @@ class ManyongLicense(commands.Cog):
     @app_commands.command(name="마뇽인증_신청", description="마뇽 감지기 라이선스를 신청합니다.")
     @app_commands.guild_only()
     async def request(self, i):
-        # 신청 명령은 지정된 '감지기 라이선스' 채널에서만 허용
+        await self.submit_request(i)
+
+
+
+    @app_commands.command(name="마뇽인증_신청버튼설치", description="감지기 라이선스 채널에 신청 버튼을 설치합니다.")
+    @app_commands.guild_only()
+    async def install_request_button(self, i):
+        if not await admin_check(i):
+            return
+
         if i.channel_id != LICENSE_REQUEST_CHANNEL_ID:
             await i.response.send_message(
-                f"❌ 라이선스 신청은 <#{LICENSE_REQUEST_CHANNEL_ID}> 채널에서만 가능합니다.",
+                f"❌ 이 명령은 <#{LICENSE_REQUEST_CHANNEL_ID}> 채널에서 실행해 주세요.",
                 ephemeral=True,
             )
             return
 
-        r = await self.row(i.user.id)
-        if r and r["status"]=="active":
-            await i.response.send_message("ℹ️ 이미 활성 라이선스가 있습니다.", ephemeral=True); return
-        if r and r["status"]=="blocked":
-            await i.response.send_message("❌ 차단된 라이선스입니다.", ephemeral=True); return
-        if r and r["status"]=="pending":
-            await i.response.send_message("⏳ 이미 승인 대기 중입니다.", ephemeral=True); return
-        async with self.pool.acquire() as c:
-            await c.execute("""INSERT INTO manyong_licenses(discord_id,discord_name,status,requested_at,updated_at)
-            VALUES($1,$2,'pending',NOW(),NOW()) ON CONFLICT(discord_id) DO UPDATE SET
-            discord_name=$2,status='pending',requested_at=NOW(),updated_at=NOW()""", i.user.id, str(i.user))
-        ch = i.guild.get_channel(LICENSE_CHANNEL_ID) if LICENSE_CHANNEL_ID else None
-        if not ch:
-            await i.response.send_message("⚠️ 승인 채널이 아직 설정되지 않았습니다.", ephemeral=True); return
-        e = discord.Embed(title="🐉 마뇽 감지기 라이선스 신청", color=discord.Color.blurple())
-        e.add_field(name="신청자", value=i.user.mention, inline=False)
-        e.add_field(name="Discord ID", value=str(i.user.id), inline=False)
-        await ch.send(embed=e, view=ApprovalView(self, i.user.id))
-        await i.response.send_message("✅ 신청 완료. 운영진 승인을 기다려 주세요.", ephemeral=True)
+        embed = discord.Embed(
+            title="🐉 마뇽 감지기 라이선스",
+            description=(
+                "마뇽 감지기 사용을 원하시면 아래 **라이선스 신청** 버튼을 눌러주세요.\n\n"
+                "신청 후 운영진 승인이 완료되면 라이선스 키가 DM으로 발급됩니다."
+            ),
+            color=discord.Color.green(),
+        )
+        embed.add_field(
+            name="신청 안내",
+            value=(
+                "• 한 사람당 하나의 활성 라이선스를 사용할 수 있습니다.\n"
+                "• 이미 신청했다면 중복 신청되지 않습니다.\n"
+                "• 발급된 라이선스 키는 다른 사람에게 공유하지 마세요."
+            ),
+            inline=False,
+        )
+
+        await i.channel.send(embed=embed, view=LicenseRequestView(self))
+        await i.response.send_message(
+            "✅ 라이선스 신청 버튼을 이 채널에 설치했습니다.",
+            ephemeral=True,
+        )
 
     @app_commands.command(name="마뇽인증_목록", description="라이선스 목록을 확인합니다.")
     @app_commands.guild_only()
