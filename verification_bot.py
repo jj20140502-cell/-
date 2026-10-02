@@ -26,6 +26,7 @@ async def setup_hook():
     await bot.load_extension("cogs.boss")         # 기존 boss Cog
     await bot.load_extension("cogs.Suggestions")  # 건의접수함 Cog
     await bot.load_extension("cogs.calculator")   # 계산기 Cog 
+    await bot.load_extension("cogs.manyong_license") # 마뇽 라이선스 Cog
     
     # 🟢 모든 Cog 로드가 끝난 후 맨 밑에 슬래시 명령어 동기화 추가!
     await bot.tree.sync()
