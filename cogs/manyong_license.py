@@ -46,6 +46,19 @@ class LicenseRequestView(discord.ui.View):
         await self.cog.submit_request(i)
 
 
+class DownloadView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Button(
+                label="마뇽 감지기 다운로드",
+                emoji="📥",
+                style=discord.ButtonStyle.link,
+                url="https://github.com/jj20140502-cell/-/releases/download/v1.0.0/ManyongDetector.exe",
+            )
+        )
+
+
 class DeleteLicenseConfirmView(discord.ui.View):
     def __init__(self, cog, target_id: int, requester_id: int):
         super().__init__(timeout=60)
@@ -432,7 +445,15 @@ class ManyongLicense(commands.Cog):
         sent = False
         if member:
             try:
-                await member.send(f"🐉 새 마뇽 감지기 라이선스 키: `{key}`")
+                await member.send(
+                    "🔄 **마뇽 감지기 라이선스 재발급**\n\n"
+                    "새 라이선스 키\n"
+                    f"`{key}`\n\n"
+                    "기존 키는 더 이상 사용할 수 없습니다.\n"
+                    "아래 버튼에서 감지기를 다운로드할 수 있습니다.\n\n"
+                    "**GORI GUILD · MADE BY 이복애**",
+                    view=DownloadView(),
+                )
                 sent = True
             except discord.Forbidden:
                 pass
@@ -455,7 +476,15 @@ class ManyongLicense(commands.Cog):
         sent = False
         if m:
             try:
-                await m.send(f"🐉 **마뇽 감지기 라이선스 승인**\n라이선스 키: `{key}`\n다른 사람에게 공유하지 마세요.")
+                await m.send(
+                    "🐉 **마뇽 감지기 라이선스 승인**\n\n"
+                    "라이선스 키\n"
+                    f"`{key}`\n\n"
+                    "아래 버튼에서 감지기를 다운로드할 수 있습니다.\n"
+                    "라이선스는 최초 인증한 PC 1대에 등록됩니다.\n\n"
+                    "**GORI GUILD · MADE BY 이복애**",
+                    view=DownloadView(),
+                )
                 sent = True
             except discord.Forbidden: pass
         msg = f"✅ <@{uid}> 승인 완료."
@@ -740,7 +769,15 @@ class ManyongLicense(commands.Cog):
             await c.execute("""UPDATE manyong_licenses SET license_key_hash=$1,status='active',
             device_hash=NULL,activated_at=NULL,updated_at=NOW() WHERE discord_id=$2""",key_hash(key),사용자.id)
         try:
-            await 사용자.send(f"🐉 새 마뇽 감지기 라이선스 키: `{key}`")
+            await 사용자.send(
+                "🔄 **마뇽 감지기 라이선스 재발급**\n\n"
+                "새 라이선스 키\n"
+                f"`{key}`\n\n"
+                "기존 키는 더 이상 사용할 수 없습니다.\n"
+                "아래 버튼에서 감지기를 다운로드할 수 있습니다.\n\n"
+                "**GORI GUILD · MADE BY 이복애**",
+                view=DownloadView(),
+            )
             msg=f"🔄 {사용자.mention} 재발급 완료. DM 전송 완료."
         except discord.Forbidden:
             msg=f"🔄 재발급 완료. DM 실패 — 키: `{key}`"
