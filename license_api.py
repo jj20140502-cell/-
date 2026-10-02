@@ -1,25 +1,15 @@
 import os
 import hashlib
 
-import asyncpg
+import psycopg
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-pool = None
 
 
 def sha256_text(value: str) -> str:
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
-
-
-@app.before_request
-async def ensure_pool():
-    global pool
-    if pool is None:
-        if not DATABASE_URL:
-            return jsonify({"ok": False, "code": "server_config_error"}), 500
-        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
 
 
 @app.get("/")
@@ -28,7 +18,14 @@ def health():
 
 
 @app.post("/api/license/verify")
-async def verify_license():
+def verify_license():
+    if not DATABASE_URL:
+        return jsonify({
+            "ok": False,
+            "code": "server_config_error",
+            "message": "라이선스 서버 설정 오류입니다.",
+        }), 500
+
     body = request.get_json(silent=True) or {}
     license_key = str(body.get("license_key", "")).strip()
     device_hash = str(body.get("device_hash", "")).strip().lower()
@@ -40,7 +37,6 @@ async def verify_license():
             "message": "라이선스 키와 기기 정보가 필요합니다.",
         }), 400
 
-    # 클라이언트가 원본 하드웨어 정보를 보내지 않고 SHA-256 결과만 보내도록 제한
     if len(device_hash) != 64 or any(c not in "0123456789abcdef" for c in device_hash):
         return jsonify({
             "ok": False,
@@ -50,62 +46,71 @@ async def verify_license():
 
     license_hash = sha256_text(license_key)
 
-    async with pool.acquire() as con:
-        async with con.transaction():
-            row = await con.fetchrow("""
-                SELECT discord_id, status, device_hash
-                FROM manyong_licenses
-                WHERE license_key_hash=$1
-                FOR UPDATE
-            """, license_hash)
+    try:
+        with psycopg.connect(DATABASE_URL) as con:
+            with con.cursor() as cur:
+                cur.execute("""
+                    SELECT discord_id, status, device_hash
+                    FROM manyong_licenses
+                    WHERE license_key_hash=%s
+                    FOR UPDATE
+                """, (license_hash,))
+                row = cur.fetchone()
 
-            if not row:
-                return jsonify({
-                    "ok": False,
-                    "code": "invalid_license",
-                    "message": "유효하지 않은 라이선스 키입니다.",
-                }), 401
+                if not row:
+                    return jsonify({
+                        "ok": False,
+                        "code": "invalid_license",
+                        "message": "유효하지 않은 라이선스 키입니다.",
+                    }), 401
 
-            if row["status"] != "active":
-                return jsonify({
-                    "ok": False,
-                    "code": "license_not_active",
-                    "message": "현재 사용할 수 없는 라이선스입니다.",
-                }), 403
+                discord_id, status, registered = row
 
-            registered = row["device_hash"]
+                if status != "active":
+                    return jsonify({
+                        "ok": False,
+                        "code": "license_not_active",
+                        "message": "현재 사용할 수 없는 라이선스입니다.",
+                    }), 403
 
-            # 최초 인증 PC 자동 귀속
-            if not registered:
-                await con.execute("""
-                    UPDATE manyong_licenses
-                    SET device_hash=$1,
-                        activated_at=COALESCE(activated_at, NOW()),
-                        updated_at=NOW()
-                    WHERE discord_id=$2
-                """, device_hash, row["discord_id"])
+                if not registered:
+                    cur.execute("""
+                        UPDATE manyong_licenses
+                        SET device_hash=%s,
+                            activated_at=COALESCE(activated_at, NOW()),
+                            updated_at=NOW()
+                        WHERE discord_id=%s
+                    """, (device_hash, discord_id))
+                    con.commit()
+
+                    return jsonify({
+                        "ok": True,
+                        "code": "activated",
+                        "message": "라이선스가 이 PC에 등록되었습니다.",
+                    })
+
+                if registered != device_hash:
+                    return jsonify({
+                        "ok": False,
+                        "code": "device_mismatch",
+                        "message": "이 라이선스는 다른 PC에 등록되어 있습니다.",
+                    }), 403
 
                 return jsonify({
                     "ok": True,
-                    "code": "activated",
-                    "message": "라이선스가 이 PC에 등록되었습니다.",
+                    "code": "valid",
+                    "message": "라이선스 인증에 성공했습니다.",
                 })
 
-            if registered != device_hash:
-                return jsonify({
-                    "ok": False,
-                    "code": "device_mismatch",
-                    "message": "이 라이선스는 다른 PC에 등록되어 있습니다.",
-                }), 403
-
-            return jsonify({
-                "ok": True,
-                "code": "valid",
-                "message": "라이선스 인증에 성공했습니다.",
-            })
+    except Exception:
+        app.logger.exception("license verification failed")
+        return jsonify({
+            "ok": False,
+            "code": "server_error",
+            "message": "라이선스 서버 내부 오류가 발생했습니다.",
+        }), 500
 
 
 @app.post("/api/license/status")
-async def license_status():
-    # verify와 동일한 검증을 사용. 향후 클라이언트 주기검증용 엔드포인트.
-    return await verify_license()
+def license_status():
+    return verify_license()
