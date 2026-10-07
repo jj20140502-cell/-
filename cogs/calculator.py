@@ -120,8 +120,8 @@ class ExpModal(Modal, title="📊 레벨업 시뮬레이터"):
     현재레벨 = TextInput(label="현재 레벨 (1~219)", placeholder="예: 195", required=True)
     현재경험치 = TextInput(label="현재 경험치 (만 단위 또는 %)", placeholder="예: 5500만 또는 33.33%", required=True)
     목표레벨 = TextInput(label="목표 레벨 (2~220)", placeholder="예: 220", required=True)
-    시간당경험치 = TextInput(label="시간당 사냥 경험치 (선택)", placeholder="예: 8000만", required=False)
-    보스경험치요약 = TextInput(label="보스경험치/처치횟수 (선택)", placeholder="예: 500만/12", required=False)
+    시간당경험치 = TextInput(label="시간당 사냥 경험치 (선택)", placeholder="예: 1억 8000만", required=False)
+    보스경험치요약 = TextInput(label="보스경험치/처치횟수 (선택)", placeholder="예: 3억/12", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -189,7 +189,7 @@ class ExpModal(Modal, title="📊 레벨업 시뮬레이터"):
 
 
 class CashModal(Modal, title="⚖️ 캐시템 메포 효율 계산"):
-    캐시템이름 = TextInput(label="캐시템 이름 (⚠️숫자 제외!)", placeholder="예: '혈반 한달' 또는 '혈반'", required=True)
+    캐시템이름 = TextInput(label="캐시템 이름", placeholder="예: '큐브' 또는 '코반'", required=True)
     캐시템가격_메포 = TextInput(label="캐시 가격 (소모 메포)", placeholder="예: 1000", required=True)
     경매장판매가격 = TextInput(label="경매장 등록 단가 (메소)", placeholder="예: 5억 또는 1억 1000", required=True)
 
@@ -231,10 +231,10 @@ class DistributeModal(Modal):
         title = "💰 분배금 계산기 · 판매금 기준" if price_mode == "sale" else "💰 분배금 계산기 · 수령금액 기준"
         super().__init__(title=title)
 
-        self.item_name = TextInput(label="아이템명", placeholder="예: 광휘의 보스 세트", required=True, max_length=100)
+        self.item_name = TextInput(label="아이템명", placeholder="예: 카혼목", required=True, max_length=100)
         self.member_count = TextInput(label="정산인원", placeholder="예: 6", required=True, max_length=3)
         self.amount = TextInput(label="정산금액", placeholder="예: 1.5 / 1억 5천만 / 1억 5000 / 150,000,000", required=True)
-        self.deduct = TextInput(label="차감금액 (가위)", placeholder="예: 1.5 / 1억 5천만 / 1억 5000 / 150,000,000", required=False)
+        self.deduct = TextInput(label="차감금액 (가위)", placeholder="예: 330만 / 3,300,000", required=False)
 
         self.add_item(self.item_name)
         self.add_item(self.member_count)
