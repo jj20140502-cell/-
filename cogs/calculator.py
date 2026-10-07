@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from discord.ui import Modal, TextInput
+from discord.ui import Modal, TextInput, View, Button
 import math
 import re
 
@@ -67,6 +67,31 @@ def parse_numeric_input(text: str, ref_exp: int = 0):
             if pure_num:
                 total = int(pure_num.group(1))
     return total
+
+
+def parse_meso_input(text: str):
+    """분배금 전용 메소 파서. 단위 없는 소수는 억 단위로 처리합니다."""
+    if not text or not text.strip():
+        return 0
+
+    raw = text.strip().replace(",", "").replace(" ", "")
+
+    # 1.5 -> 150,000,000 / 1.69 -> 169,000,000
+    if re.fullmatch(r"\d+(?:\.\d+)", raw):
+        return math.floor(float(raw) * 100_000_000)
+
+    # 1억5천만 -> 1억5000만
+    raw = re.sub(
+        r"(\d+)천만",
+        lambda m: str(int(m.group(1)) * 1000) + "만",
+        raw
+    )
+
+    return parse_numeric_input(raw)
+
+
+def format_meso(value: int):
+    return f"{value:,} 메소"
 
 def parse_item_input(text: str):
     if not text or not text.strip():
@@ -200,93 +225,152 @@ class CashModal(Modal, title="⚖️ 캐시템 메포 효율 계산"):
         await interaction.response.send_message(embed=embed)
 
 
-class DistributeModal(Modal, title="💰 보스 분배금 계산기"):
-    정산인원 = TextInput(label="총 정산 인원수", placeholder="예: 6", required=True)
-    아이템입력_a = TextInput(label="아이템 A (⚠️이름엔 숫자 금지)", placeholder="예: 메용 1억 2000", required=True)
-    차감금액 = TextInput(label="정산 전 총액에서 차감할 금액 (선택)", placeholder="예: 2000만", required=False)
-    아이템입력_b = TextInput(label="아이템 B (선택)", placeholder="예: 고확 5000만", required=False)
-    아이템입력_c = TextInput(label="아이템 C (선택)", placeholder="예: 일비 800만", required=False)
+class DistributeModal(Modal):
+    def __init__(self, price_mode: str):
+        self.price_mode = price_mode
+        title = "💰 분배금 계산기 · 판매금 기준" if price_mode == "sale" else "💰 분배금 계산기 · 수령금액 기준"
+        super().__init__(title=title)
+
+        self.item_name = TextInput(label="아이템명", placeholder="예: 광휘의 보스 세트", required=True, max_length=100)
+        self.member_count = TextInput(label="정산인원", placeholder="예: 6", required=True, max_length=3)
+        self.amount = TextInput(label="정산금액", placeholder="예: 1.5 / 1억 5천만 / 1억 5000 / 150,000,000", required=True)
+        self.deduct = TextInput(label="차감금액 (가위)", placeholder="예: 1.5 / 1억 5천만 / 1억 5000 / 150,000,000", required=False)
+
+        self.add_item(self.item_name)
+        self.add_item(self.member_count)
+        self.add_item(self.amount)
+        self.add_item(self.deduct)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            count = int(self.정산인원.value.replace(" ", ""))
+            count = int(self.member_count.value.replace(",", "").replace(" ", ""))
         except ValueError:
-            await interaction.response.send_message("인원수는 숫자만 적어주세요.", ephemeral=True)
+            await interaction.response.send_message("정산 인원은 숫자로 입력해주세요.", ephemeral=True)
             return
+
         if count <= 0:
-            await interaction.response.send_message("인원수는 1명 이상이어야 합니다.", ephemeral=True)
+            await interaction.response.send_message("정산 인원은 1명 이상이어야 합니다.", ephemeral=True)
             return
 
-        name_a, price_a = parse_item_input(self.아이템입력_a.value)
-        name_b, price_b = parse_item_input(self.아이템입력_b.value)
-        name_c, price_c = parse_item_input(self.아이템입력_c.value)
-        deduct_value = parse_numeric_input(self.차감금액.value)
+        amount = parse_meso_input(self.amount.value)
+        deduct_value = parse_meso_input(self.deduct.value)
 
-        if price_a == 0:
-            await interaction.response.send_message("첫 번째 아이템의 금액을 인식하지 못했습니다.", ephemeral=True)
+        if amount <= 0:
+            await interaction.response.send_message(
+                "정산금액을 인식하지 못했습니다.\n예: `1.5`, `1억 5천만`, `1억 5000`, `150,000,000`",
+                ephemeral=True
+            )
             return
 
-        profit_a = math.floor(price_a * 0.9)
-        profit_b = math.floor(price_b * 0.9) if price_b > 0 else 0
-        profit_c = math.floor(price_c * 0.9) if price_c > 0 else 0
+        if self.price_mode == "sale":
+            received_amount = math.floor(amount * 0.9)
+            fee_amount = amount - received_amount
+            mode_text = "판매금 기준"
+        else:
+            received_amount = amount
+            fee_amount = 0
+            mode_text = "수령금액 기준"
 
-        total_sales = price_a + price_b + price_c
-        pure_profit_before_deduct = profit_a + profit_b + profit_c
-        final_pure_profit = max(0, pure_profit_before_deduct - deduct_value)
-        base_share = math.floor(final_pure_profit / count)
-        
+        final_profit = max(0, received_amount - deduct_value)
+        base_share = math.floor(final_profit / count)
+
+        # 택배: 1인당 교환 분배금에서 8% + 10,000 메소 차감
         taxi_fee_pct = math.floor(base_share * 0.08)
-        total_taxi_deduct = taxi_fee_pct + 10000
-        after_taxi_share = max(0, base_share - total_taxi_deduct)
+        taxi_send_fee = 10_000
+        after_taxi_share = max(0, base_share - taxi_fee_pct - taxi_send_fee)
 
         embed = discord.Embed(title="💰 보스 레이드 분배금 정산 결과", color=discord.Color.gold())
-        items_text = f"• {name_a}: {price_a:,} 메소 (경매장 10%)\n"
-        if price_b > 0:
-            items_text += f"• {name_b}: {price_b:,} 메소 (경매장 10%)\n"
-        if price_c > 0:
-            items_text += f"• {name_c}: {price_c:,} 메소 (경매장 10%)\n"
+        embed.add_field(name="📦 아이템", value=f"**{self.item_name.value}**", inline=False)
+        embed.add_field(name="⚙️ 정산 기준", value=f"**{mode_text}**", inline=True)
+        embed.add_field(name="👥 정산 인원", value=f"**{count}명**", inline=True)
+        embed.add_field(name="💰 입력 정산금액", value=format_meso(amount), inline=False)
 
-        embed.add_field(name="🛒 총 등록 금액", value=f"{total_sales:,} 메소\n({items_text.strip()})", inline=False)
-        embed.add_field(name="📉 수수료 제외 금액", value=f"{pure_profit_before_deduct:,} 메소", inline=True)
-        embed.add_field(name="💸 공용 차감 금액", value=f"- {deduct_value:,} 메소", inline=True)
-        embed.add_field(name="✨ 최종 순수익 합계", value=f"**{final_pure_profit:,}** 메소", inline=False)
-        embed.add_field(name="👥 정산 인원수", value=f"{count} 명", inline=True)
-        embed.add_field(name="💵 1인당 기본 분배금 (교환)", value=f"**{base_share:,}** 메소", inline=True)
-        
-        taxi_desc = f"• 택배 수수료 (8%): {taxi_fee_pct:,} 메소\n• 택배 발송비: 10,000 메소\n➡️ **최종 수령액 (택배): {after_taxi_share:,} 메소**"
-        embed.add_field(name="📦 택배 수령 시 금액", value=taxi_desc, inline=False)
-        
+        if self.price_mode == "sale":
+            embed.add_field(
+                name="🏢 경매장 수수료 10%",
+                value=f"- {format_meso(fee_amount)}\n➡️ 수수료 제외: **{format_meso(received_amount)}**",
+                inline=False
+            )
+
+        embed.add_field(name="✂️ 차감금액 (가위)", value=f"- {format_meso(deduct_value)}", inline=False)
+        embed.add_field(name="✨ 최종 정산금액", value=f"**{format_meso(final_profit)}**", inline=False)
+        embed.add_field(name="💵 1인당 기본 분배금 (교환)", value=f"**{format_meso(base_share)}**", inline=False)
+        embed.add_field(
+            name="📦 택배 수령 시 금액",
+            value=(
+                f"• 택배 수수료 (8%): {format_meso(taxi_fee_pct)}\n"
+                f"• 택배 발송비: {format_meso(taxi_send_fee)}\n"
+                f"➡️ **최종 수령액 (택배): {format_meso(after_taxi_share)}**"
+            ),
+            inline=False
+        )
         await interaction.response.send_message(embed=embed)
+
+
+class DistributePanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="판매금 기준 계산", emoji="💰", style=discord.ButtonStyle.primary, custom_id="calculator:distribute:sale")
+    async def sale_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(DistributeModal("sale"))
+
+    @discord.ui.button(label="수령금액 기준 계산", emoji="💵", style=discord.ButtonStyle.secondary, custom_id="calculator:distribute:received")
+    async def received_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(DistributeModal("received"))
+
+
+class ExpPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="상세 입력", emoji="📊", style=discord.ButtonStyle.primary, custom_id="calculator:exp:detail")
+    async def detail_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(ExpModal())
+
+
+class CashPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="메포 효율 계산", emoji="⚖️", style=discord.ButtonStyle.primary, custom_id="calculator:cash:open")
+    async def cash_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(CashModal())
 
 
 # --- Cog 클래스 구현 ---
 class Calculator(commands.Cog):
+    DISTRIBUTE_CHANNEL_ID = 1555270492179537991
+    EXP_CHANNEL_ID = 1555270546747297843
+    CASH_CHANNEL_ID = 1555270628129636422
+
     def __init__(self, bot):
         self.bot = bot
-        self.channel_id = 1524082505903378495  # 채널 이름을 실시간 인원수로 변경할 채널 ID
+        self.channel_id = 1524082505903378495
+        self.panels_initialized = False
 
-    def cog_load(self):
-        # Cog가 로드되면 유저/봇 수 업데이트 루프 실행
+    async def cog_load(self):
         if not self.update_stats.is_running():
             self.update_stats.start()
 
+        self.bot.add_view(DistributePanel())
+        self.bot.add_view(ExpPanel())
+        self.bot.add_view(CashPanel())
+
     def cog_unload(self):
-        # Cog가 언로드되면 루프 중단
         self.update_stats.cancel()
 
     @tasks.loop(minutes=5)
     async def update_stats(self):
         if not self.bot.guilds:
             return
-            
+
         guild = self.bot.guilds[0]
         channel = guild.get_channel(self.channel_id)
-        
         if channel:
             total_members = guild.member_count
             bot_count = sum(1 for member in guild.members if member.bot)
             human_count = total_members - bot_count
-            
             try:
                 await channel.edit(name=f"👥 유저: {human_count}명 | 🤖 봇: {bot_count}개")
             except Exception as e:
@@ -296,18 +380,162 @@ class Calculator(commands.Cog):
     async def before_update_stats(self):
         await self.bot.wait_until_ready()
 
-    # --- 슬래시 명령어 ---
-    @app_commands.command(name="경험치", description="레벨업 경험치 및 사냥 예상 시간을 시뮬레이션합니다.")
-    async def exp_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(ExpModal())
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self.panels_initialized:
+            return
+        self.panels_initialized = True
+        await self.ensure_calculator_panels()
 
-    @app_commands.command(name="메포", description="캐시 아이템의 메이플포인트 효율을 계산합니다.")
-    async def cash_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(CashModal())
+    async def ensure_panel_message(self, channel, embed, view, title_keyword):
+        try:
+            async for message in channel.history(limit=50):
+                if message.author.id != self.bot.user.id or not message.embeds:
+                    continue
+                if title_keyword in (message.embeds[0].title or ""):
+                    await message.edit(embed=embed, view=view)
+                    if not message.pinned:
+                        try:
+                            await message.pin()
+                        except discord.HTTPException:
+                            pass
+                    return
 
-    @app_commands.command(name="분배금", description="보스 레이드 전리품 판매 수익을 인원별로 분배 정산합니다.")
-    async def distribute_slash(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(DistributeModal())
+            message = await channel.send(embed=embed, view=view)
+            try:
+                await message.pin()
+            except discord.HTTPException:
+                pass
+        except discord.Forbidden:
+            print(f"[계산기] 채널 권한 부족: {channel.id}")
+        except discord.HTTPException as e:
+            print(f"[계산기] 패널 생성/갱신 실패 {channel.id}: {e}")
+
+    async def ensure_calculator_panels(self):
+        channel = self.bot.get_channel(self.DISTRIBUTE_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="💰 보스 분배금 계산기",
+                description=(
+                    "아래에서 정산 기준을 선택해주세요.\n\n"
+                    "**💰 판매금 기준**\n판매금에서 경매장 수수료 **10%**를 제외하고 가위값을 차감한 뒤 인원수로 분배합니다.\n\n"
+                    "**💵 수령금액 기준**\n이미 수수료가 제외된 수령금액에서 가위값만 차감한 뒤 인원수로 분배합니다.\n\n"
+                    "**금액 입력 예시**\n`1.5` / `1억 5천만` / `1억 5000` / `150,000,000`\n\n"
+                    "결과에는 **교환 분배금**과 **택배 최종 수령액**이 함께 표시됩니다."
+                ),
+                color=discord.Color.gold()
+            )
+            await self.ensure_panel_message(channel, embed, DistributePanel(), "보스 분배금 계산기")
+
+        channel = self.bot.get_channel(self.EXP_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="📊 레벨업 경험치 계산기",
+                description=(
+                    "이 채널에 아래 형식으로 바로 입력할 수 있습니다.\n\n"
+                    "`현재레벨 현재경험치% 목표레벨`\n예: `195 53.2% 220`\n\n"
+                    "`%`를 생략한 `195 53.2 220` 형식도 사용할 수 있습니다.\n\n"
+                    "시간당 사냥 경험치나 보스 경험치까지 계산하려면 아래 **상세 입력** 버튼을 이용해주세요."
+                ),
+                color=discord.Color.green()
+            )
+            await self.ensure_panel_message(channel, embed, ExpPanel(), "레벨업 경험치 계산기")
+
+        channel = self.bot.get_channel(self.CASH_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="⚖️ 캐시템 메포 효율 계산기",
+                description="아래 버튼을 눌러 캐시 아이템의 메포 효율을 계산할 수 있습니다.",
+                color=discord.Color.blue()
+            )
+            await self.ensure_panel_message(channel, embed, CashPanel(), "캐시템 메포 효율 계산기")
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or message.channel.id != self.EXP_CHANNEL_ID:
+            return
+
+        match = re.fullmatch(r"(\d+)\s+([\d.]+)%?\s+(\d+)", message.content.strip())
+        if not match:
+            return
+
+        try:
+            cur_lvl = int(match.group(1))
+            current_pct = float(match.group(2))
+            tar_lvl = int(match.group(3))
+        except ValueError:
+            return
+
+        if cur_lvl < 1 or cur_lvl > 219 or tar_lvl <= cur_lvl or tar_lvl > 220:
+            await message.reply(
+                "❌ 레벨 범위가 올바르지 않습니다. (현재 레벨 1~219 / 목표 레벨 최대 220)",
+                mention_author=False
+            )
+            return
+
+        if not 0 <= current_pct <= 100:
+            await message.reply("❌ 현재 경험치는 0~100% 사이로 입력해주세요.", mention_author=False)
+            return
+
+        level_max_exp = EXP_TABLE[cur_lvl]
+        current_exp = math.floor(level_max_exp * (current_pct / 100.0))
+        total_required_exp = level_max_exp - current_exp
+        for lvl in range(cur_lvl + 1, tar_lvl):
+            total_required_exp += EXP_TABLE[lvl]
+
+        embed = discord.Embed(title="📊 레벨업 경험치 계산 결과", color=discord.Color.green())
+        embed.add_field(
+            name="📈 현재 상태",
+            value=f"Lv.{cur_lvl} ({current_pct:.2f}%)\n({current_exp:,} / {level_max_exp:,} EXP)",
+            inline=True
+        )
+        embed.add_field(
+            name="🏁 목표 상태",
+            value=f"Lv.{tar_lvl}\n(필요 레벨업: {tar_lvl - cur_lvl}업)",
+            inline=True
+        )
+        embed.add_field(name="🎯 총 필요 경험치", value=f"**{total_required_exp:,}** EXP", inline=False)
+        await message.reply(embed=embed, mention_author=False)
+
+
+
+    @app_commands.command(
+        name="계산기패널",
+        description="계산기 전용 채널의 패널을 생성하거나 갱신합니다."
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def calculator_panel(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            await self.ensure_calculator_panels()
+            await interaction.followup.send(
+                "✅ 계산기 패널을 확인했습니다.\n"
+                "분배금 / 경험치 / 메포 채널에 기존 패널이 있으면 갱신하고, "
+                "없으면 새로 생성했습니다.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ 계산기 패널 처리 중 오류가 발생했습니다: `{e}`",
+                ephemeral=True
+            )
+
+    @calculator_panel.error
+    async def calculator_panel_error(
+        self,
+        interaction: discord.Interaction,
+        error: app_commands.AppCommandError
+    ):
+        if isinstance(error, app_commands.MissingPermissions):
+            message = "❌ 이 명령어는 서버 관리자만 사용할 수 있습니다."
+        else:
+            message = f"❌ 명령어 실행 중 오류가 발생했습니다: `{error}`"
+
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
 
 
 async def setup(bot):
