@@ -30,6 +30,7 @@ async def setup_hook():
     await bot.load_extension("cogs.duck_race")
     await bot.load_extension("cogs.game_panel")
     await bot.load_extension("cogs.maple_notice")
+    print("📢 maple_notice Cog 로드 완료")
     
     # 🟢 모든 Cog 로드가 끝난 후 맨 밑에 슬래시 명령어 동기화 추가!
     await bot.tree.sync()
