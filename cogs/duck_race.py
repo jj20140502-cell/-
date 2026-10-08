@@ -27,7 +27,7 @@ def save_results(guild, users, order):
 
 async def announce_results(channel, users, labels, order, uploaded_at):
     # Use the successful upload time, rather than a viewer's playback time.
-    await asyncio.sleep(max(0, uploaded_at + 30 - asyncio.get_running_loop().time()))
+    await asyncio.sleep(max(0, uploaded_at + 35 - asyncio.get_running_loop().time()))
     ranking = '\n'.join(
         f'{i+1}위 · {discord.utils.escape_markdown(labels[d])} · <@{users[d]}>'
         for i,d in enumerate(order)
@@ -100,13 +100,13 @@ class RaceView(discord.ui.View):
                 with tempfile.TemporaryDirectory(prefix='duck-race-') as temp:
                     ducks = sorted(users)
                     frames, order = simulate(ducks)
-                    path = await asyncio.to_thread(render,ducks,frames,order,Path(temp)/'race.mp4',labels)
+                    path = await asyncio.to_thread(render,ducks,frames,order,Path(temp)/'race.gif',labels)
                     limit = interaction.guild.filesize_limit
                     if path.stat().st_size > limit:
                         raise RuntimeError('영상이 서버 업로드 한도를 초과했습니다.')
                     await interaction.channel.send(
-                        content='🏁 경주 영상을 재생하세요! 업로드 후 30초 뒤에 결과를 발표합니다.',
-                        file=discord.File(path,filename='duck-race.mp4'),
+                        content='🏁 오리 경주 GIF입니다! 업로드 후 35초 뒤에 결과를 발표합니다.',
+                        file=discord.File(path,filename='duck-race.gif'),
                         allowed_mentions=discord.AllowedMentions.none(),
                     )
                     uploaded_at = asyncio.get_running_loop().time()

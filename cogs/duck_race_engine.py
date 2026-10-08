@@ -90,7 +90,12 @@ def render(ducks, frames, order, output, labels=None):
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     import imageio_ffmpeg
-    cmd = [imageio_ffmpeg.get_ffmpeg_exe(),'-y','-loglevel','error','-f','rawvideo','-pixel_format','rgb24','-video_size','960x600','-framerate',str(FPS),'-i','-','-an','-c:v','libx264','-preset','veryfast','-crf','27','-pix_fmt','yuv420p','-movflags','+faststart',str(output)]
+    cmd = [imageio_ffmpeg.get_ffmpeg_exe(), '-y', '-loglevel', 'error',
+           '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', '960x600',
+           '-framerate', str(FPS), '-i', '-', '-an', '-filter_complex_threads', '1',
+           '-filter_complex',
+           'scale=720:450:flags=neighbor,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=none',
+           '-loop', '0', str(output)]
     process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for tick,(positions,events) in enumerate(frames):
