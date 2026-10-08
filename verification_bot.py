@@ -18,30 +18,30 @@ intents.members = True  # 유저 별명 변경, 역할 부여, 추방을 위해 
 
 
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+class MyBot(commands.Bot):
 
-# 기존 bot 정의 코드 아래에 추가
-@bot.event
-async def setup_hook():
-    print("🔴 SETUP_HOOK 진입!")
+    async def setup_hook(self):
+        print("🔴 SETUP_HOOK 진입!", flush=True)
 
-    await bot.load_extension("cogs.boss")
-    await bot.load_extension("cogs.Suggestions")
-    await bot.load_extension("cogs.calculator")
-    await bot.load_extension("cogs.manyong_license")
-    await bot.load_extension("cogs.duck_race")
-    await bot.load_extension("cogs.game_panel")
+        await self.load_extension("cogs.boss")
+        await self.load_extension("cogs.Suggestions")
+        await self.load_extension("cogs.calculator")
+        await self.load_extension("cogs.manyong_license")
+        await self.load_extension("cogs.duck_race")
+        await self.load_extension("cogs.game_panel")
 
-    print("🟡 기존 Cog 로드 완료!")
+        print("🟡 기존 Cog 로드 완료!", flush=True)
 
-    await bot.load_extension("cogs.maple_notice")
+        await self.load_extension("cogs.maple_notice")
 
-    print("🟢 maple_notice 로드 완료!")
+        print("🟢 maple_notice 로드 완료!", flush=True)
 
-    await bot.tree.sync()
+        await self.tree.sync()
 
-    print("✅ 모든 Cog 로드 및 슬래시 명령어 동기화 완료!")
+        print("✅ 모든 Cog 로드 및 슬래시 명령어 동기화 완료!", flush=True)
 
+
+bot = MyBot(command_prefix="!", intents=intents)
 # ================= [ ⚙️ 완벽 반영된 서버/채널/역할 ID 설정 ] =================
 
 # 1. 역할 ID 설정
