@@ -36,6 +36,8 @@ class MyBot(commands.Bot):
 
         print("🟢 maple_notice 로드 완료!", flush=True)
 
+        await self.load_extension("cogs.jara")
+
         await self.tree.sync()
 
         print("✅ 모든 Cog 로드 및 슬래시 명령어 동기화 완료!", flush=True)
