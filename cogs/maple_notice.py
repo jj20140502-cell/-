@@ -1,178 +1,163 @@
 import asyncio
 import hashlib
 import json
-import os
+import re
+from pathlib import Path
+from urllib.parse import urljoin
 
 import aiohttp
 import discord
 from bs4 import BeautifulSoup
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 
 # =========================================================
-# 📌 디스코드 채널 ID
+# 📢 메이플플래닛 공지 자동 알림
 # =========================================================
 
 MAINTENANCE_CHANNEL_ID = 1557841882095030302
 PATCHNOTE_CHANNEL_ID = 1557841935593513032
 
-
-# =========================================================
-# 📌 메이플플래닛 공식 페이지
-# =========================================================
-
-MAINTENANCE_LIST_URL = (
-    "https://mapleplanet.co.kr/news/notices?status=maintenance"
-)
-
-PATCHNOTE_LIST_URL = (
-    "https://mapleplanet.co.kr/news/updates"
-)
+MAINTENANCE_LIST_URL = "https://mapleplanet.co.kr/news/notices?status=maintenance"
+PATCHNOTE_LIST_URL = "https://mapleplanet.co.kr/news/updates"
 
 BASE_URL = "https://mapleplanet.co.kr"
 
+# 확인 주기
+CHECK_INTERVAL = 60
 
-# =========================================================
-# 📌 상태 저장 파일
-# =========================================================
-
-STATE_FILE = "maple_notice_state.json"
+# 상태 저장 파일
+STATE_FILE = Path("maple_notice_state.json")
 
 
-# =========================================================
-# MaplePlanet Notice Cog
-# =========================================================
-
-class MaplePlanetNotice(commands.Cog):
+class MapleNotice(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.session = None
+        self.notice_task = None
 
-        self.state = {
-            "maintenance": {},
-            "patchnote": {}
-        }
+    # =====================================================
+    # Cog 로드
+    # =====================================================
 
-        self.load_state()
+    async def cog_load(self):
+        self.session = aiohttp.ClientSession(
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/140.0 Safari/537.36"
+                )
+            }
+        )
 
-        # 1분마다 공지 확인
-        self.notice_checker.start()
+        self.notice_task = asyncio.create_task(
+            self.notice_loop()
+        )
 
+        print("📢 메이플플래닛 공지 감시 시작")
 
     # =====================================================
     # Cog 종료
     # =====================================================
 
-    def cog_unload(self):
-        self.notice_checker.cancel()
+    async def cog_unload(self):
 
+        if self.notice_task:
+            self.notice_task.cancel()
+
+        if self.session:
+            await self.session.close()
 
     # =====================================================
-    # 상태 불러오기
+    # 상태 파일
     # =====================================================
 
     def load_state(self):
 
-        if not os.path.exists(STATE_FILE):
-            return
+        if not STATE_FILE.exists():
+            return {
+                "maintenance": None,
+                "patchnote": None
+            }
 
         try:
-
             with open(
                 STATE_FILE,
                 "r",
                 encoding="utf-8"
             ) as f:
+                return json.load(f)
 
-                data = json.load(f)
+        except Exception:
+            return {
+                "maintenance": None,
+                "patchnote": None
+            }
 
-            self.state.update(data)
+    def save_state(self, state):
 
-            # 예전 버전의 상태 파일과 호환
-            if not isinstance(
-                self.state.get("maintenance"),
-                dict
-            ):
-                self.state["maintenance"] = {}
+        with open(
+            STATE_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
 
-            if not isinstance(
-                self.state.get("patchnote"),
-                dict
-            ):
-                self.state["patchnote"] = {}
-
-        except Exception as e:
-
-            print(
-                f"[메이플 공지] "
-                f"상태 파일 불러오기 실패: {e}"
+            json.dump(
+                state,
+                f,
+                ensure_ascii=False,
+                indent=2
             )
 
-
     # =====================================================
-    # 상태 저장
-    # =====================================================
-
-    def save_state(self):
-
-        try:
-
-            with open(
-                STATE_FILE,
-                "w",
-                encoding="utf-8"
-            ) as f:
-
-                json.dump(
-                    self.state,
-                    f,
-                    ensure_ascii=False,
-                    indent=4
-                )
-
-        except Exception as e:
-
-            print(
-                f"[메이플 공지] "
-                f"상태 파일 저장 실패: {e}"
-            )
-
-
-    # =====================================================
-    # HTML 가져오기
+    # 웹 페이지 가져오기
     # =====================================================
 
     async def fetch_html(self, url):
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/120.0 Safari/537.36"
-            )
-        }
+        try:
 
-        timeout = aiohttp.ClientTimeout(
-            total=20
-        )
-
-        async with aiohttp.ClientSession(
-            headers=headers,
-            timeout=timeout
-        ) as session:
-
-            async with session.get(url) as response:
+            async with self.session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as response:
 
                 if response.status != 200:
-
-                    raise Exception(
-                        f"HTTP {response.status}"
+                    print(
+                        f"⚠️ 웹 요청 실패: "
+                        f"{response.status} / {url}"
                     )
+                    return None
 
                 return await response.text()
 
+        except Exception as e:
+
+            print(
+                f"⚠️ 웹 요청 오류: {e}"
+            )
+
+            return None
+
+    # =====================================================
+    # 게시글 ID 추출
+    # =====================================================
+
+    def get_post_id(self, url):
+
+        match = re.search(
+            r"/news/(?:notices|updates)/(\d+)",
+            url
+        )
+
+        if not match:
+            return 0
+
+        return int(match.group(1))
 
     # =====================================================
     # 최신 게시글 찾기
@@ -180,207 +165,137 @@ class MaplePlanetNotice(commands.Cog):
 
     async def get_latest_post(
         self,
-        url,
+        list_url,
         post_type
     ):
 
-        html = await self.fetch_html(url)
+        html = await self.fetch_html(list_url)
+
+        if not html:
+            return None
 
         soup = BeautifulSoup(
             html,
             "html.parser"
         )
 
-        # -------------------------------------------------
-        # 게시글 주소 패턴
-        # -------------------------------------------------
+        posts = {}
 
-        candidates = []
+        if post_type == "maintenance":
 
-        for a in soup.find_all(
-            "a",
-            href=True
-        ):
+            pattern = r"/news/notices/(\d+)"
 
-            href = a.get("href", "").strip()
+        else:
 
-            if post_type == "notices":
+            pattern = r"/news/updates/(\d+)"
 
-                if not href.startswith(
-                    "/news/notices/"
-                ):
-                    continue
+        for a in soup.find_all("a"):
 
-            elif post_type == "updates":
+            href = a.get("href")
 
-                if not href.startswith(
-                    "/news/updates/"
-                ):
-                    continue
-
-            else:
+            if not href:
                 continue
 
+            full_url = urljoin(
+                BASE_URL,
+                href
+            )
 
-            # 숫자 ID가 붙은 실제 게시글인지 확인
-            parts = href.rstrip("/").split("/")
+            match = re.search(
+                pattern,
+                full_url
+            )
 
-            if not parts:
+            if not match:
                 continue
 
-            if not parts[-1].isdigit():
-                continue
-
+            post_id = int(match.group(1))
 
             title = a.get_text(
                 " ",
                 strip=True
             )
 
-            if not title:
-                continue
+            posts[post_id] = {
+                "id": post_id,
+                "url": full_url,
+                "title": title
+            }
 
-
-            candidates.append(
-                (
-                    href,
-                    title
-                )
+        if not posts:
+            print(
+                f"⚠️ 최신 {post_type} 게시글을 찾지 못했습니다."
             )
-
-
-        if not candidates:
             return None
 
+        # 게시글 번호가 가장 큰 것을 최신으로 판단
+        latest_id = max(posts.keys())
 
-        # -------------------------------------------------
-        # 중복 링크 제거
-        # -------------------------------------------------
-
-        unique = []
-
-        seen = set()
-
-        for href, title in candidates:
-
-            if href in seen:
-                continue
-
-            seen.add(href)
-
-            unique.append(
-                (
-                    href,
-                    title
-                )
-            )
-
-
-        if not unique:
-            return None
-
-
-        # 목록에서 가장 먼저 발견된 게시글 = 최신글
-        href, title = unique[0]
-
-
-        if href.startswith("http"):
-
-            full_url = href
-
-        else:
-
-            full_url = (
-                BASE_URL + href
-            )
-
-
-        return {
-            "url": full_url,
-            "title": title
-        }
-
+        return posts[latest_id]
 
     # =====================================================
     # 게시글 본문 가져오기
     # =====================================================
 
-    async def get_article_content(
-        self,
-        url
-    ):
+    async def get_article(self, url):
 
         html = await self.fetch_html(url)
+
+        if not html:
+            return None
 
         soup = BeautifulSoup(
             html,
             "html.parser"
         )
 
-
-        # -------------------------------------------------
-        # 불필요한 태그 제거
-        # -------------------------------------------------
-
-        for tag in soup.find_all(
-            [
-                "script",
-                "style",
-                "nav",
-                "header",
-                "footer"
-            ]
-        ):
-
+        # 불필요한 영역 제거
+        for tag in soup([
+            "script",
+            "style",
+            "noscript",
+            "header",
+            "footer",
+            "nav"
+        ]):
             tag.decompose()
 
-
-        # -------------------------------------------------
-        # 게시글 제목 제거
-        # -------------------------------------------------
-
-        for tag_name in [
-            "h1",
-            "h2"
-        ]:
-
-            tag = soup.find(tag_name)
-
-            if tag:
-                tag.decompose()
-
-                break
-
-
-        # -------------------------------------------------
-        # 본문 후보
-        # -------------------------------------------------
-
+        # 게시글 본문 후보
         article = (
             soup.find("article")
             or soup.find("main")
-            or soup.body
         )
 
+        if article is None:
+            article = soup.body
 
-        if not article:
+        if article is None:
+            return None
 
-            return (
-                "⚠️ 공지 본문을 "
-                "가져오지 못했습니다."
+        # 제목 제거
+        for heading in article.find_all(
+            ["h1", "h2"],
+            limit=2
+        ):
+            heading.decompose()
+
+        title = soup.find("h1")
+
+        if title:
+            title_text = title.get_text(
+                " ",
+                strip=True
             )
+        else:
+            title_text = "메이플플래닛 공지"
 
-
+        # 텍스트 추출
         text = article.get_text(
             "\n",
             strip=True
         )
 
-
-        # -------------------------------------------------
-        # 빈 줄 정리
-        # -------------------------------------------------
-
+        # 너무 많은 빈 줄 제거
         lines = []
 
         for line in text.splitlines():
@@ -392,626 +307,459 @@ class MaplePlanetNotice(commands.Cog):
 
             lines.append(line)
 
-
         text = "\n".join(lines)
 
+        # 사이트 하단 고정 문구 제거
+        remove_texts = [
+            "메이플플래닛은 MapleStory Worlds 플랫폼에서 즐길 수 있는 클래식 메이플스토리 RPG 게임입니다.",
+            "'MapleStory' 및 관련 지식재산권은 NEXON Korea Corp.",
+            "© 2026 Planet Games."
+        ]
 
-        return text.strip()
+        for remove_text in remove_texts:
+            text = text.replace(
+                remove_text,
+                ""
+            )
 
+        text = text.strip()
+
+        return {
+            "title": title_text,
+            "content": text
+        }
 
     # =====================================================
     # 본문 해시
     # =====================================================
 
-    def make_content_hash(
+    def make_hash(self, content):
+
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            content
+        ).strip()
+
+        return hashlib.sha256(
+            normalized.encode("utf-8")
+        ).hexdigest()
+
+    # =====================================================
+    # Discord 메시지 찾기
+    # =====================================================
+
+    async def get_message(
         self,
+        channel_id,
+        message_id
+    ):
+
+        if not message_id:
+            return None
+
+        channel = self.bot.get_channel(
+            channel_id
+        )
+
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(
+                    channel_id
+                )
+            except Exception:
+                return None
+
+        try:
+            return await channel.fetch_message(
+                message_id
+            )
+
+        except Exception:
+            return None
+
+    # =====================================================
+    # 본문 Discord 전송
+    # =====================================================
+
+    async def send_content(
+        self,
+        thread,
         content
     ):
 
-        normalized = (
-            content
-            .replace("\r", "")
-            .strip()
-        )
-
-        return hashlib.sha256(
-            normalized.encode(
-                "utf-8"
-            )
-        ).hexdigest()
-
-
-    # =====================================================
-    # Discord 메시지 길이 분할
-    # =====================================================
-
-    def split_message(
-        self,
-        text,
-        max_length=1900
-    ):
-
-        chunks = []
-
-        while len(text) > max_length:
-
-            cut = text.rfind(
-                "\n",
+        # Discord 메시지 최대 2000자
+        chunks = [
+            content[i:i + 1900]
+            for i in range(
                 0,
-                max_length
+                len(content),
+                1900
             )
+        ]
 
-            if cut < 500:
+        for chunk in chunks:
 
-                cut = max_length
+            await thread.send(chunk)
 
-
-            chunks.append(
-                text[:cut].strip()
-            )
-
-            text = text[
-                cut:
-            ].strip()
-
-
-        if text:
-
-            chunks.append(
-                text
-            )
-
-
-        return chunks
-
+            await asyncio.sleep(0.2)
 
     # =====================================================
-    # 새 공지 전송
+    # 새 공지 등록
     # =====================================================
 
-    async def send_new_notice(
+    async def create_notice(
         self,
-        notice_type,
         post,
-        content,
-        channel_id
+        article,
+        channel_id,
+        notice_type
     ):
 
         channel = self.bot.get_channel(
             channel_id
         )
 
-
         if channel is None:
 
-            print(
-                "[메이플 공지] "
-                f"채널을 찾을 수 없습니다: "
-                f"{channel_id}"
-            )
+            try:
+                channel = await self.bot.fetch_channel(
+                    channel_id
+                )
+            except Exception as e:
 
-            return None
+                print(
+                    f"❌ 채널을 찾을 수 없습니다: "
+                    f"{channel_id} / {e}"
+                )
 
-
-        # -------------------------------------------------
-        # 종류별 Embed
-        # -------------------------------------------------
+                return None
 
         if notice_type == "maintenance":
 
-            embed = discord.Embed(
-                title=f"🛠️ {post['title']}",
-                description=(
-                    "메이플플래닛 공식 홈페이지에 "
-                    "새로운 **점검 공지**가 등록되었습니다.\n\n"
-                    f"🔗 [공식 공지 원문]({post['url']})"
-                ),
-                color=0xF39C12
-            )
-
-        else:
-
-            embed = discord.Embed(
-                title=f"📜 {post['title']}",
-                description=(
-                    "메이플플래닛 공식 홈페이지에 "
-                    "새로운 **패치노트**가 등록되었습니다.\n\n"
-                    f"🔗 [공식 패치노트]({post['url']})"
-                ),
-                color=0x3498DB
-            )
-
-
-        embed.set_footer(
-            text="MAPLEPLANET 공식 공지 자동 알림"
-        )
-
-
-        # -------------------------------------------------
-        # 메인 메시지
-        # -------------------------------------------------
-
-        message = await channel.send(
-            embed=embed
-        )
-
-
-        # -------------------------------------------------
-        # 스레드 생성
-        # -------------------------------------------------
-
-        thread = await message.create_thread(
-            name=post["title"][:100],
-            auto_archive_duration=1440
-        )
-
-
-        # -------------------------------------------------
-        # 본문 전송
-        # -------------------------------------------------
-
-        chunks = self.split_message(
-            content
-        )
-
-
-        for index, chunk in enumerate(
-            chunks
-        ):
-
-            if index == 0:
-
-                await thread.send(
-                    "📢 **공식 공지 원문**\n\n"
-                    + chunk
-                )
-
-            else:
-
-                await thread.send(
-                    chunk
-                )
-
-
-            await asyncio.sleep(
-                0.3
-            )
-
-
-        # -------------------------------------------------
-        # 원문 링크
-        # -------------------------------------------------
-
-        await thread.send(
-            "🔗 **공식 공지:**\n"
-            + post["url"]
-        )
-
-
-        print(
-            "[메이플 공지] 새 공지 전송 완료: "
-            + post["title"]
-        )
-
-
-        return {
-            "message_id": message.id,
-            "thread_id": thread.id
-        }
-
-
-    # =====================================================
-    # 수정 공지 처리
-    # =====================================================
-
-    async def update_existing_notice(
-        self,
-        notice_type,
-        post,
-        content,
-        previous_state
-    ):
-
-        thread_id = previous_state.get(
-            "thread_id"
-        )
-
-        message_id = previous_state.get(
-            "message_id"
-        )
-
-
-        # -------------------------------------------------
-        # 스레드 가져오기
-        # -------------------------------------------------
-
-        thread = None
-
-        if thread_id:
-
-            thread = self.bot.get_channel(
-                thread_id
-            )
-
-
-            if thread is None:
-
-                try:
-
-                    thread = await self.bot.fetch_channel(
-                        thread_id
-                    )
-
-                except Exception:
-
-                    thread = None
-
-
-        # -------------------------------------------------
-        # 기존 스레드를 찾지 못했다면
-        # 새 공지처럼 다시 생성
-        # -------------------------------------------------
-
-        if thread is None:
-
-            print(
-                "[메이플 공지] "
-                "기존 스레드를 찾지 못했습니다. "
-                "새 스레드를 생성합니다."
-            )
-
-            channel_id = (
-                MAINTENANCE_CHANNEL_ID
-                if notice_type == "maintenance"
-                else PATCHNOTE_CHANNEL_ID
-            )
-
-
-            new_data = await self.send_new_notice(
-                notice_type,
-                post,
-                content,
-                channel_id
-            )
-
-            return new_data
-
-
-        # -------------------------------------------------
-        # 수정 알림
-        # -------------------------------------------------
-
-        if notice_type == "maintenance":
-
-            emoji = "🛠️"
-            kind = "점검 공지"
+            emoji = "🔧"
+            color = discord.Color.orange()
+            type_name = "라이브 점검"
 
         else:
 
             emoji = "📜"
-            kind = "패치노트"
+            color = discord.Color.blue()
+            type_name = "패치노트"
 
+        embed = discord.Embed(
+            title=f"{emoji} {article['title']}",
+            description=(
+                f"새로운 **{type_name}**가 등록되었습니다.\n\n"
+                f"아래 스레드에서 자세한 내용을 확인해주세요."
+            ),
+            color=color,
+            url=post["url"]
+        )
 
+        embed.set_footer(
+            text="메이플플래닛 공식 홈페이지"
+        )
+
+        parent_message = await channel.send(
+            embed=embed
+        )
+
+        # 스레드 생성
+        thread = await parent_message.create_thread(
+            name=article["title"][:90],
+            auto_archive_duration=1440
+        )
+
+        # 본문
+        await self.send_content(
+            thread,
+            article["content"]
+        )
+
+        # 원문 링크
         await thread.send(
-            f"{emoji} **{kind}가 수정되었습니다.**\n\n"
-            f"📌 **{post['title']}**\n"
-            "공식 홈페이지의 내용이 변경되었습니다.\n\n"
-            f"🔗 [수정된 원문 보기]({post['url']})"
+            f"🔗 **원문:** {post['url']}"
         )
 
-
-        # -------------------------------------------------
-        # 수정된 본문
-        # -------------------------------------------------
-
-        chunks = self.split_message(
-            content
+        print(
+            f"📢 새 {notice_type} 등록: "
+            f"{article['title']}"
         )
 
+        return {
+            "url": post["url"],
+            "title": article["title"],
+            "content_hash": self.make_hash(
+                article["content"]
+            ),
+            "message_id": parent_message.id,
+            "thread_id": thread.id
+        }
 
-        await thread.send(
-            "✏️ **수정된 공지 원문**"
-        )
+    # =====================================================
+    # 수정된 공지 처리
+    # =====================================================
 
+    async def update_notice(
+        self,
+        old_data,
+        post,
+        article,
+        channel_id,
+        notice_type
+    ):
 
-        for chunk in chunks:
+        thread = None
+        parent_message = None
 
-            await thread.send(
-                chunk
+        # 부모 메시지
+        if old_data.get("message_id"):
+
+            parent_message = await self.get_message(
+                channel_id,
+                old_data["message_id"]
             )
 
-            await asyncio.sleep(
-                0.3
-            )
-
-
-        await thread.send(
-            f"🔗 {post['url']}"
-        )
-
-
-        # -------------------------------------------------
-        # 부모 메시지 제목도 수정
-        # -------------------------------------------------
-
-        if message_id:
+        # 스레드
+        if old_data.get("thread_id"):
 
             try:
 
-                channel = thread.parent
+                thread = self.bot.get_channel(
+                    old_data["thread_id"]
+                )
 
-                if channel is None:
+                if thread is None:
 
-                    channel = self.bot.get_channel(
-                        thread.parent_id
+                    thread = await self.bot.fetch_channel(
+                        old_data["thread_id"]
                     )
 
+            except Exception:
 
-                if channel:
+                thread = None
 
-                    parent_message = await channel.fetch_message(
-                        message_id
-                    )
+        # =================================================
+        # 스레드가 정상적으로 존재하는 경우
+        # =================================================
 
+        if thread:
 
-                    if notice_type == "maintenance":
+            await thread.send(
+                "⚠️ **이 공지가 수정되었습니다.**\n"
+                "아래는 수정된 최신 내용입니다."
+            )
 
-                        new_title = (
-                            f"🛠️ {post['title']}"
-                        )
+            await self.send_content(
+                thread,
+                article["content"]
+            )
 
-                        color = 0xF39C12
+            await thread.send(
+                f"🔗 **최신 원문:** {post['url']}"
+            )
 
-                    else:
+        # =================================================
+        # 부모 메시지 Embed 업데이트
+        # =================================================
 
-                        new_title = (
-                            f"📜 {post['title']}"
-                        )
+        if parent_message:
 
-                        color = 0x3498DB
+            if notice_type == "maintenance":
 
+                color = discord.Color.orange()
+                emoji = "🔧"
 
-                    embed = discord.Embed(
-                        title=new_title,
-                        description=(
-                            "메이플플래닛 공식 홈페이지의 "
-                            "공지가 수정되었습니다.\n\n"
-                            f"🔗 [공식 원문]({post['url']})"
-                        ),
-                        color=color
-                    )
+            else:
 
-                    embed.set_footer(
-                        text="MAPLEPLANET 공식 공지 자동 알림"
-                    )
+                color = discord.Color.blue()
+                emoji = "📜"
 
+            embed = discord.Embed(
+                title=f"{emoji} {article['title']}",
+                description=(
+                    "⚠️ **수정된 공지입니다.**\n\n"
+                    "본문이 수정되었습니다. "
+                    "스레드에서 최신 내용을 확인해주세요."
+                ),
+                color=color,
+                url=post["url"]
+            )
 
-                    await parent_message.edit(
-                        embed=embed
-                    )
+            embed.set_footer(
+                text="메이플플래닛 공식 홈페이지"
+            )
 
+            try:
+
+                await parent_message.edit(
+                    embed=embed
+                )
 
             except Exception as e:
 
                 print(
-                    "[메이플 공지] "
-                    f"부모 메시지 수정 실패: {e}"
+                    f"⚠️ 부모 메시지 수정 실패: {e}"
                 )
 
-
         print(
-            "[메이플 공지] 수정 공지 반영 완료: "
-            + post["title"]
+            f"✏️ 수정된 {notice_type}: "
+            f"{article['title']}"
         )
 
-
         return {
-            "message_id": message_id,
-            "thread_id": thread.id
+            "url": post["url"],
+            "title": article["title"],
+            "content_hash": self.make_hash(
+                article["content"]
+            ),
+            "message_id": old_data.get(
+                "message_id"
+            ),
+            "thread_id": old_data.get(
+                "thread_id"
+            )
         }
 
-
     # =====================================================
-    # 공지 확인
+    # 공지 하나 검사
     # =====================================================
 
     async def check_notice(
         self,
+        state,
         notice_type,
         list_url,
-        post_type,
         channel_id
     ):
 
-        try:
+        latest = await self.get_latest_post(
+            list_url,
+            notice_type
+        )
 
-            # -------------------------------------------------
-            # 최신 게시글
-            # -------------------------------------------------
+        if not latest:
+            return
 
-            latest = await self.get_latest_post(
-                list_url,
-                post_type
-            )
+        article = await self.get_article(
+            latest["url"]
+        )
 
+        if not article:
+            return
 
-            if not latest:
+        current_hash = self.make_hash(
+            article["content"]
+        )
 
-                return
+        old_data = state.get(
+            notice_type
+        )
 
+        # =================================================
+        # 최초 실행
+        # =================================================
 
-            # -------------------------------------------------
-            # 최신 글 본문
-            # -------------------------------------------------
+        if old_data is None:
 
-            content = await self.get_article_content(
-                latest["url"]
-            )
-
-
-            content_hash = self.make_content_hash(
-                content
-            )
-
-
-            # -------------------------------------------------
-            # 이전 상태
-            # -------------------------------------------------
-
-            previous = self.state.get(
-                notice_type,
-                {}
-            )
-
-
-            previous_url = previous.get(
-                "url"
-            )
-
-            previous_hash = previous.get(
-                "content_hash"
-            )
-
-
-            # =================================================
-            # 🆕 최초 실행
-            # =================================================
-
-            if not previous_url:
-
-                self.state[notice_type] = {
-                    "url": latest["url"],
-                    "title": latest["title"],
-                    "content_hash": content_hash,
-                    "message_id": None,
-                    "thread_id": None
-                }
-
-                self.save_state()
-
-
-                print(
-                    "[메이플 공지] 최초 실행 - "
-                    f"기존 공지 기록: {latest['title']}"
-                )
-
-                return
-
-
-            # =================================================
-            # 🆕 새로운 공지
-            # =================================================
-
-            if latest["url"] != previous_url:
-
-                result = await self.send_new_notice(
-                    notice_type,
-                    latest,
-                    content,
-                    channel_id
-                )
-
-
-                if result:
-
-                    self.state[notice_type] = {
-                        "url": latest["url"],
-                        "title": latest["title"],
-                        "content_hash": content_hash,
-                        "message_id": result["message_id"],
-                        "thread_id": result["thread_id"]
-                    }
-
-                    self.save_state()
-
-
-                return
-
-
-            # =================================================
-            # ✏️ 기존 공지 수정
-            # =================================================
-
-            if content_hash != previous_hash:
-
-                result = await self.update_existing_notice(
-                    notice_type,
-                    latest,
-                    content,
-                    previous
-                )
-
-
-                if result:
-
-                    self.state[notice_type] = {
-                        "url": latest["url"],
-                        "title": latest["title"],
-                        "content_hash": content_hash,
-                        "message_id": result.get(
-                            "message_id"
-                        ),
-                        "thread_id": result.get(
-                            "thread_id"
-                        )
-                    }
-
-                    self.save_state()
-
-
-                return
-
-
-        except Exception as e:
+            state[notice_type] = {
+                "url": latest["url"],
+                "title": article["title"],
+                "content_hash": current_hash,
+                "message_id": None,
+                "thread_id": None
+            }
 
             print(
-                "[메이플 공지] 확인 중 오류 "
-                f"({notice_type}): {e}"
+                f"📌 최초 실행 - 현재 {notice_type} 저장: "
+                f"{article['title']}"
             )
 
+            return
+
+        # =================================================
+        # 새로운 게시글
+        # =================================================
+
+        if old_data.get("url") != latest["url"]:
+
+            new_data = await self.create_notice(
+                latest,
+                article,
+                channel_id,
+                notice_type
+            )
+
+            if new_data:
+                state[notice_type] = new_data
+
+            return
+
+        # =================================================
+        # 같은 게시글인데 본문 수정
+        # =================================================
+
+        if old_data.get(
+            "content_hash"
+        ) != current_hash:
+
+            new_data = await self.update_notice(
+                old_data,
+                latest,
+                article,
+                channel_id,
+                notice_type
+            )
+
+            if new_data:
+                state[notice_type] = new_data
 
     # =====================================================
-    # 1분마다 공지 확인
+    # 주기적으로 검사
     # =====================================================
 
-    @tasks.loop(minutes=1)
-    async def notice_checker(self):
+    async def notice_loop(self):
 
         await self.bot.wait_until_ready()
 
+        state = self.load_state()
 
-        # -------------------------------------------------
-        # 🛠️ 점검
-        # -------------------------------------------------
+        while not self.bot.is_closed():
 
-        await self.check_notice(
-            notice_type="maintenance",
-            list_url=MAINTENANCE_LIST_URL,
-            post_type="notices",
-            channel_id=MAINTENANCE_CHANNEL_ID
-        )
+            try:
 
+                # 점검 공지
+                await self.check_notice(
+                    state,
+                    "maintenance",
+                    MAINTENANCE_LIST_URL,
+                    MAINTENANCE_CHANNEL_ID
+                )
 
-        # -------------------------------------------------
-        # 📜 패치노트
-        # -------------------------------------------------
+                # 패치노트
+                await self.check_notice(
+                    state,
+                    "patchnote",
+                    PATCHNOTE_LIST_URL,
+                    PATCHNOTE_CHANNEL_ID
+                )
 
-        await self.check_notice(
-            notice_type="patchnote",
-            list_url=PATCHNOTE_LIST_URL,
-            post_type="updates",
-            channel_id=PATCHNOTE_CHANNEL_ID
-        )
+                self.save_state(state)
 
+            except asyncio.CancelledError:
 
-    # =====================================================
-    # 봇 시작 전 대기
-    # =====================================================
+                break
 
-    @notice_checker.before_loop
-    async def before_notice_checker(self):
+            except Exception as e:
 
-        await self.bot.wait_until_ready()
+                print(
+                    f"❌ 메이플 공지 감시 오류: {e}"
+                )
+
+            await asyncio.sleep(
+                CHECK_INTERVAL
+            )
 
 
 # =========================================================
@@ -1021,5 +769,5 @@ class MaplePlanetNotice(commands.Cog):
 async def setup(bot):
 
     await bot.add_cog(
-        MaplePlanetNotice(bot)
+        MapleNotice(bot)
     )
