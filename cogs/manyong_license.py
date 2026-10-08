@@ -179,6 +179,24 @@ class ThreadManageView(discord.ui.View):
         if not await admin_check(i): return
         await self.cog.thread_reissue(i, self.uid)
 
+    @discord.ui.button(label="추가발급", emoji="➕", style=discord.ButtonStyle.success,
+                       custom_id="manyong_thread_extra_issue")
+    async def extra_issue_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_issue_extra(i, self.uid)
+
+    @discord.ui.button(label="추가재발급", emoji="🔁", style=discord.ButtonStyle.primary,
+                       custom_id="manyong_thread_extra_reissue")
+    async def extra_reissue_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_reissue_extra(i, self.uid)
+
+    @discord.ui.button(label="추가기기초기화", emoji="🖥️", style=discord.ButtonStyle.secondary,
+                       custom_id="manyong_thread_extra_reset")
+    async def extra_reset_btn(self, i, b):
+        if not await admin_check(i): return
+        await self.cog.thread_reset_extra_device(i, self.uid)
+
     @discord.ui.button(label="상태 새로고침", emoji="📋", style=discord.ButtonStyle.secondary,
                        custom_id="manyong_thread_refresh")
     async def refresh_btn(self, i, b):
@@ -241,6 +259,19 @@ class ManyongLicense(commands.Cog):
             await c.execute(
                 "ALTER TABLE manyong_licenses ADD COLUMN IF NOT EXISTS manage_message_id BIGINT"
             )
+
+        async with self.pool.acquire() as c:
+            await c.execute("""
+                CREATE TABLE IF NOT EXISTS manyong_extra_licenses (
+                    discord_id BIGINT PRIMARY KEY REFERENCES manyong_licenses(discord_id) ON DELETE CASCADE,
+                    license_key_hash TEXT NOT NULL UNIQUE,
+                    device_hash TEXT,
+                    activated_at TIMESTAMPTZ,
+                    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    issued_by BIGINT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
 
         # 기존 관리 스레드의 버튼도 Render 재시작 후 계속 동작하도록 복원
         async with self.pool.acquire() as c:
@@ -356,6 +387,14 @@ class ManyongLicense(commands.Cog):
         e.add_field(name="상태", value=self.status_label(r["status"]), inline=True)
         e.add_field(name="PC 등록", value="🖥️ 등록됨" if r["device_hash"] else "➖ 미등록", inline=True)
         e.add_field(name="키", value="🔑 발급됨" if r["license_key_hash"] else "➖ 미발급", inline=True)
+        async with self.pool.acquire() as c:
+            extra = await c.fetchrow(
+                "SELECT device_hash FROM manyong_extra_licenses WHERE discord_id=$1", uid
+            )
+        e.add_field(name="추가 라이선스", value=(
+            "🔑 발급됨 · " + ("🖥️ PC 등록됨" if extra["device_hash"] else "➖ PC 미등록")
+            if extra else "➖ 미발급"
+        ), inline=False)
         e.set_footer(text="버튼 동작 후 상태가 자동 갱신됩니다.")
         return e
 
@@ -430,6 +469,114 @@ class ManyongLicense(commands.Cog):
             ephemeral=True)
         if result != "UPDATE 0":
             await self.after_thread_action(i, uid, "♻️ 등록 기기 초기화")
+
+    async def thread_issue_extra(self, i, uid):
+        # DB 트랜잭션과 PK 제약으로 동시 클릭에도 1개만 발급.
+        key = new_key()
+        async with self.pool.acquire() as c:
+            async with c.transaction():
+                base = await c.fetchrow(
+                    "SELECT status,license_key_hash FROM manyong_licenses WHERE discord_id=$1 FOR UPDATE", uid
+                )
+                if not base or base["status"] != "active" or not base["license_key_hash"]:
+                    await i.response.send_message("❌ 기본 라이선스가 활성 상태인 사용자만 추가발급할 수 있습니다.", ephemeral=True)
+                    return
+                existing = await c.fetchval(
+                    "SELECT 1 FROM manyong_extra_licenses WHERE discord_id=$1", uid
+                )
+                if existing:
+                    await i.response.send_message("ℹ️ 이미 추가 라이선스가 발급된 사용자입니다. 중복 발급하지 않았습니다.", ephemeral=True)
+                    return
+                await c.execute(
+                    "INSERT INTO manyong_extra_licenses(discord_id,license_key_hash,issued_by) VALUES($1,$2,$3)",
+                    uid, key_hash(key), i.user.id
+                )
+        member = i.guild.get_member(uid)
+        if member is None:
+            try: member = await i.guild.fetch_member(uid)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException): pass
+        sent = False
+        if member:
+            try:
+                await member.send(
+                    "➕ **마뇽 감지기 추가 라이선스**\n\n"
+                    f"두 번째 PC용 라이선스 키: `{key}`\n\n"
+                    "기존 라이선스는 그대로 유지됩니다. 새 키는 최초 인증한 PC에 등록됩니다.\n"
+                    "**GORI GUILD**", view=DownloadView()
+                )
+                sent = True
+            except discord.HTTPException:
+                pass
+        await i.response.send_message(
+            "✅ 추가 라이선스 발급 및 DM 전송 완료." if sent else
+            f"⚠️ 추가 라이선스 발급 완료, DM 전송 실패. 이 키를 사용자에게 안전하게 전달하세요: `{key}`",
+            ephemeral=True
+        )
+        await self.after_thread_action(i, uid, "➕ 추가 라이선스 발급")
+
+    async def thread_reissue_extra(self, i, uid):
+        """기존 추가 키를 폐기하고 새 키로 교체. 기본 키는 그대로 유지."""
+        key = new_key()
+        async with self.pool.acquire() as c:
+            async with c.transaction():
+                base = await c.fetchrow(
+                    "SELECT status FROM manyong_licenses WHERE discord_id=$1 FOR UPDATE", uid
+                )
+                if not base or base["status"] != "active":
+                    await i.response.send_message(
+                        "❌ 기본 라이선스가 활성 상태인 사용자만 추가 키를 재발급할 수 있습니다.",
+                        ephemeral=True,
+                    )
+                    return
+                result = await c.execute(
+                    "UPDATE manyong_extra_licenses "
+                    "SET license_key_hash=$1, device_hash=NULL, activated_at=NULL, "
+                    "issued_at=NOW(), issued_by=$2, updated_at=NOW() "
+                    "WHERE discord_id=$3",
+                    key_hash(key), i.user.id, uid,
+                )
+                if result == "UPDATE 0":
+                    await i.response.send_message(
+                        "❌ 추가 라이선스가 없습니다. 먼저 추가발급을 사용해 주세요.", ephemeral=True
+                    )
+                    return
+        member = i.guild.get_member(uid)
+        if member is None:
+            try:
+                member = await i.guild.fetch_member(uid)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                member = None
+        sent = False
+        if member:
+            try:
+                await member.send(
+                    "🔁 **마뇽 감지기 추가 라이선스 재발급**\n\n"
+                    f"새 두 번째 PC용 라이선스 키: `{key}`\n\n"
+                    "이전 추가 키는 폐기되었고 추가 PC 등록도 초기화되었습니다. "
+                    "기본 라이선스는 변경되지 않았습니다.\n**GORI GUILD**",
+                    view=DownloadView(),
+                )
+                sent = True
+            except discord.HTTPException:
+                pass
+        await i.response.send_message(
+            "✅ 추가 라이선스 재발급 및 DM 전송 완료." if sent else
+            f"⚠️ 추가 라이선스 재발급 완료, DM 전송 실패. 새 키를 안전하게 전달하세요: `{key}`",
+            ephemeral=True,
+        )
+        await self.after_thread_action(i, uid, "🔁 추가 라이선스 재발급")
+
+    async def thread_reset_extra_device(self, i, uid):
+        async with self.pool.acquire() as c:
+            result = await c.execute(
+                "UPDATE manyong_extra_licenses SET device_hash=NULL,activated_at=NULL,updated_at=NOW() WHERE discord_id=$1", uid
+            )
+        await i.response.send_message(
+            "♻️ 추가 라이선스 PC 등록을 초기화했습니다." if result != "UPDATE 0" else "❌ 추가 라이선스가 없습니다.",
+            ephemeral=True
+        )
+        if result != "UPDATE 0":
+            await self.after_thread_action(i, uid, "♻️ 추가 라이선스 기기초기화")
 
     async def thread_reissue(self, i, uid):
         r = await self.row(uid)
