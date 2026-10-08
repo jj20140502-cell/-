@@ -3,11 +3,10 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import quote
 
 import aiohttp
 import discord
-from bs4 import BeautifulSoup
 from discord.ext import commands
 
 
@@ -21,19 +20,18 @@ BASE_URL = "https://mapleplanet.co.kr"
 MAINTENANCE_CHANNEL_ID = 1557841882095030302
 PATCHNOTE_CHANNEL_ID = 1557841935593513032
 
-# 메이플플래닛 공식 페이지
-MAINTENANCE_LIST_URL = (
-    "https://mapleplanet.co.kr/news/notices?status=maintenance"
-)
+# 메이플플래닛 메인 페이지
+# Render에서 메이플플래닛 직접 접속 시 403이 발생하므로
+# Jina Reader를 통해 가져옵니다.
+MAPLE_HOME_URL = "https://mapleplanet.co.kr/"
 
-PATCHNOTE_LIST_URL = (
-    "https://mapleplanet.co.kr/news/updates"
-)
+# Jina Reader
+JINA_URL = "https://r.jina.ai/"
 
 # 자동 확인 주기
 CHECK_INTERVAL = 60
 
-# 마지막으로 확인한 공지 저장
+# 상태 저장 파일
 STATE_FILE = Path("maple_notice_state.json")
 
 
@@ -45,7 +43,6 @@ class MapleNotice(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-
         self.session = None
         self.notice_task = None
 
@@ -54,32 +51,32 @@ class MapleNotice(commands.Cog):
             "patchnote": {}
         }
 
-    # -----------------------------------------------------
+    # =====================================================
     # Cog 시작
-    # -----------------------------------------------------
+    # =====================================================
 
     async def cog_load(self):
 
-        print("📢 메이플플래닛 공지 감시 시작", flush=True)
+        print(
+            "📢 메이플플래닛 공지 감시 시작",
+            flush=True
+        )
 
         self.load_state()
 
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(
+            total=30
+        )
 
         headers = {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
                 "Chrome/131.0.0.0 Safari/537.36"
             ),
-            "Accept": (
-                "text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,image/avif,image/webp,"
-                "*/*;q=0.8"
-            ),
-            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": BASE_URL + "/",
+            "Accept": "text/plain,text/markdown,*/*"
         }
 
         self.session = aiohttp.ClientSession(
@@ -91,9 +88,9 @@ class MapleNotice(commands.Cog):
             self.notice_loop()
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # Cog 종료
-    # -----------------------------------------------------
+    # =====================================================
 
     def cog_unload(self):
 
@@ -106,7 +103,7 @@ class MapleNotice(commands.Cog):
             )
 
     # =====================================================
-    # 상태 저장
+    # 상태 불러오기
     # =====================================================
 
     def load_state(self):
@@ -114,10 +111,12 @@ class MapleNotice(commands.Cog):
         try:
 
             if not STATE_FILE.exists():
+
                 print(
-                    "ℹ️ 상태 파일이 없어 새로 시작합니다.",
+                    "ℹ️ 기존 상태 파일 없음",
                     flush=True
                 )
+
                 return
 
             with open(
@@ -129,7 +128,7 @@ class MapleNotice(commands.Cog):
                 self.state = json.load(f)
 
             print(
-                "📂 기존 공지 상태를 불러왔습니다.",
+                "📂 기존 공지 상태 불러오기 완료",
                 flush=True
             )
 
@@ -145,7 +144,9 @@ class MapleNotice(commands.Cog):
                 "patchnote": {}
             }
 
-    # -----------------------------------------------------
+    # =====================================================
+    # 상태 저장
+    # =====================================================
 
     def save_state(self):
 
@@ -172,55 +173,64 @@ class MapleNotice(commands.Cog):
             )
 
     # =====================================================
-    # 웹페이지 가져오기
+    # Jina Reader를 통해 페이지 가져오기
     # =====================================================
 
-    async def fetch_html(self, url):
+    async def fetch_page(self, target_url):
 
         try:
 
+            # URL 안전하게 인코딩
+            jina_url = (
+                JINA_URL
+                + target_url
+            )
+
             print(
-                f"🌐 웹페이지 요청: {url}",
+                f"🌐 Jina 요청: {target_url}",
                 flush=True
             )
 
             async with self.session.get(
-                url,
-                allow_redirects=True
+                jina_url
             ) as response:
 
                 print(
-                    f"🌐 HTTP 상태: {response.status}",
-                    flush=True
-                )
-
-                final_url = str(response.url)
-
-                print(
-                    f"🌐 최종 URL: {final_url}",
+                    f"🌐 Jina HTTP 상태: "
+                    f"{response.status}",
                     flush=True
                 )
 
                 if response.status != 200:
 
+                    error_text = await response.text()
+
                     print(
-                        f"❌ HTTP 오류 {response.status}",
+                        f"❌ Jina 오류 "
+                        f"{response.status}",
+                        flush=True
+                    )
+
+                    print(
+                        f"❌ 응답: "
+                        f"{error_text[:300]}",
                         flush=True
                     )
 
                     return None
 
-                html = await response.text(
+                text = await response.text(
                     encoding="utf-8",
                     errors="ignore"
                 )
 
                 print(
-                    f"📄 HTML 수신 완료: {len(html)} bytes",
+                    f"📄 Jina 응답 수신: "
+                    f"{len(text)} bytes",
                     flush=True
                 )
 
-                return html
+                return text
 
         except asyncio.CancelledError:
 
@@ -229,7 +239,7 @@ class MapleNotice(commands.Cog):
         except Exception as e:
 
             print(
-                f"❌ 웹페이지 요청 실패: "
+                f"❌ Jina 요청 실패: "
                 f"{type(e).__name__}: {e}",
                 flush=True
             )
@@ -237,259 +247,244 @@ class MapleNotice(commands.Cog):
             return None
 
     # =====================================================
-    # 최신 게시글 찾기
+    # 게시글 링크 추출
     # =====================================================
 
-    async def get_latest_post(self, list_url):
+    def extract_posts(
+        self,
+        text,
+        board_type
+    ):
 
-        html = await self.fetch_html(list_url)
+        posts = {}
 
-        if not html:
+        if not text:
+            return posts
 
-            print(
-                f"❌ 목록 HTML을 가져오지 못했습니다: {list_url}",
-                flush=True
-            )
+        # -------------------------------------------------
+        # Markdown 링크
+        #
+        # [제목](https://mapleplanet.co.kr/news/updates/742)
+        #
+        # 또는
+        #
+        # [제목](/news/updates/742)
+        # -------------------------------------------------
 
-            return None
-
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
+        pattern = re.compile(
+            r"\[([^\]]+)\]"
+            r"\("
+            r"(https?://mapleplanet\.co\.kr)?"
+            r"(/news/"
+            + re.escape(board_type)
+            + r"/(\d+))"
+            r"\)"
         )
 
-        posts = []
+        for match in pattern.finditer(text):
 
-        # -------------------------------------------------
-        # 모든 링크 검사
-        # -------------------------------------------------
+            title = match.group(1).strip()
+            post_id = int(match.group(4))
 
-        for link in soup.find_all(
-            "a",
-            href=True
-        ):
+            relative_url = match.group(3)
 
-            href = link.get(
-                "href",
-                ""
-            ).strip()
-
-            if not href:
-                continue
-
-            absolute_url = urljoin(
-                BASE_URL,
-                href
+            url = (
+                BASE_URL
+                + relative_url
             )
 
-            # ---------------------------------------------
-            # 게시글 URL 확인
-            # ---------------------------------------------
+            # ------------------------------------------------
+            # 점검 게시판이면 "점검" 글만
+            # ------------------------------------------------
 
-            match = re.search(
-                r"/news/(notices|updates)/(\d+)",
-                absolute_url
-            )
+            if board_type == "notices":
 
-            if not match:
-                continue
-
-            board_type = match.group(1)
-            post_id = int(match.group(2))
-
-            # ---------------------------------------------
-            # 게시판 종류 확인
-            # ---------------------------------------------
-
-            if (
-                "updates" in list_url
-                and board_type != "updates"
-            ):
-                continue
-
-            if (
-                "notices" in list_url
-                and board_type != "notices"
-            ):
-                continue
-
-            # ---------------------------------------------
-            # 제목 가져오기
-            # ---------------------------------------------
-
-            title = link.get_text(
-                " ",
-                strip=True
-            )
-
-            # 링크 자체에 제목이 없으면 부모에서 가져오기
-            if not title:
-
-                parent = link.parent
-
-                if parent:
-
-                    title = parent.get_text(
-                        " ",
-                        strip=True
-                    )
-
-            if not title:
-
-                title = f"메이플플래닛 게시글 {post_id}"
-
-            # ---------------------------------------------
-            # 점검 게시판이면 점검 글만 허용
-            # ---------------------------------------------
-
-            if "notices" in list_url:
-
-                # 공지사항 / 제재 등 제외
                 if "점검" not in title:
 
                     continue
 
-            posts.append(
-                (
-                    post_id,
-                    absolute_url,
-                    title
-                )
-            )
-
-        # =================================================
-        # 링크를 못 찾았을 경우
-        # =================================================
-
-        if not posts:
-
-            print(
-                "❌ 게시글 링크를 찾지 못했습니다.",
-                flush=True
-            )
-
-            # 디버깅용
-            print(
-                "🔎 HTML 안에 /news/ 문자열 존재:",
-                "/news/" in html,
-                flush=True
-            )
-
-            print(
-                "🔎 HTML 앞부분:",
-                html[:500].replace("\n", " "),
-                flush=True
-            )
-
-            return None
-
-        # =================================================
-        # 중복 제거
-        # =================================================
-
-        unique_posts = {}
-
-        for post_id, url, title in posts:
-
-            unique_posts[post_id] = (
+            posts[post_id] = (
                 url,
                 title
             )
 
-        # 가장 큰 게시글 ID = 최신 게시글
-        latest_id = max(
-            unique_posts.keys()
+        # -------------------------------------------------
+        # 혹시 Markdown 링크 형식이 다를 경우
+        # URL만 다시 검색
+        # -------------------------------------------------
+
+        if not posts:
+
+            url_pattern = re.compile(
+                r"https?://mapleplanet\.co\.kr"
+                r"/news/"
+                + re.escape(board_type)
+                + r"/(\d+)"
+            )
+
+            for match in url_pattern.finditer(text):
+
+                post_id = int(
+                    match.group(1)
+                )
+
+                url = (
+                    BASE_URL
+                    + f"/news/{board_type}/{post_id}"
+                )
+
+                # 제목을 주변 텍스트에서 찾기
+                start = max(
+                    0,
+                    match.start() - 150
+                )
+
+                nearby = text[
+                    start:match.start()
+                ]
+
+                lines = [
+                    x.strip()
+                    for x in nearby.splitlines()
+                    if x.strip()
+                ]
+
+                title = (
+                    lines[-1]
+                    if lines
+                    else f"메이플플래닛 게시글 {post_id}"
+                )
+
+                if board_type == "notices":
+
+                    if "점검" not in title:
+
+                        continue
+
+                posts[post_id] = (
+                    url,
+                    title
+                )
+
+        return posts
+
+    # =====================================================
+    # 최신 게시글 찾기
+    # =====================================================
+
+    async def get_latest_post(
+        self,
+        category
+    ):
+
+        text = await self.fetch_page(
+            MAPLE_HOME_URL
         )
 
-        latest_url, latest_title = unique_posts[
+        if not text:
+
+            print(
+                "❌ 메이플플래닛 메인 페이지를 "
+                "가져오지 못했습니다.",
+                flush=True
+            )
+
+            return None
+
+        # -------------------------------------------------
+        # 카테고리별 게시판
+        # -------------------------------------------------
+
+        if category == "maintenance":
+
+            board_type = "notices"
+
+        else:
+
+            board_type = "updates"
+
+        posts = self.extract_posts(
+            text,
+            board_type
+        )
+
+        # -------------------------------------------------
+        # 검색 결과
+        # -------------------------------------------------
+
+        if not posts:
+
+            print(
+                f"❌ {category} 게시글 링크를 "
+                f"찾지 못했습니다.",
+                flush=True
+            )
+
+            print(
+                "🔎 Jina 응답 앞부분:",
+                text[:1000].replace(
+                    "\n",
+                    " "
+                ),
+                flush=True
+            )
+
+            return None
+
+        latest_id = max(
+            posts.keys()
+        )
+
+        url, title = posts[
             latest_id
         ]
 
         print(
-            f"🔎 최신 게시글 발견: "
-            f"[{latest_id}] {latest_title}",
+            f"🔎 최신 {category} 발견:",
             flush=True
         )
 
         print(
-            f"🔗 URL: {latest_url}",
+            f"   ID: {latest_id}",
+            flush=True
+        )
+
+        print(
+            f"   제목: {title}",
+            flush=True
+        )
+
+        print(
+            f"   URL: {url}",
             flush=True
         )
 
         return (
-            latest_url,
-            latest_title
+            url,
+            title
         )
 
     # =====================================================
-    # 게시글 내용 가져오기
+    # 게시글 본문 가져오기
     # =====================================================
 
-    async def get_article(self, url):
+    async def get_article(
+        self,
+        url
+    ):
 
-        html = await self.fetch_html(url)
-
-        if not html:
-
-            return None
-
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
+        text = await self.fetch_page(
+            url
         )
 
-        # -------------------------------------------------
-        # 불필요한 태그 제거
-        # -------------------------------------------------
-
-        for tag in soup([
-            "script",
-            "style",
-            "noscript",
-            "header",
-            "footer",
-            "nav"
-        ]):
-
-            tag.decompose()
-
-        # -------------------------------------------------
-        # 본문 후보 찾기
-        # -------------------------------------------------
-
-        article = soup.find("article")
-
-        if not article:
-            article = soup.find("main")
-
-        if not article:
-            article = soup.body
-
-        if not article:
+        if not text:
 
             return None
 
         # -------------------------------------------------
-        # 제목 제거
+        # Jina Markdown에서 기본적인 불필요 요소 제거
         # -------------------------------------------------
 
-        for tag in article.find_all([
-            "h1",
-            "h2"
-        ]):
-
-            tag.decompose()
-
-        # -------------------------------------------------
-        # 텍스트 추출
-        # -------------------------------------------------
-
-        text = article.get_text(
-            "\n",
-            strip=True
-        )
-
-        # 너무 많은 빈 줄 제거
         lines = []
 
         for line in text.splitlines():
@@ -499,33 +494,48 @@ class MapleNotice(commands.Cog):
             if not line:
                 continue
 
+            # 너무 긴 사이트 메뉴 등은 일단 유지
             lines.append(line)
 
         text = "\n".join(lines)
 
         # -------------------------------------------------
-        # 사이트 공통 메뉴가 앞에 붙는 경우 제거
+        # 너무 앞쪽의 사이트 공통 메뉴 제거
         # -------------------------------------------------
 
-        remove_prefixes = [
-            "본문 바로가기",
-            "플래닛 소식",
-            "새로운 모험, 반가운 소식을 만나보세요."
-        ]
+        # 제목 위치를 찾는다.
+        title_match = re.search(
+            r"^# .+",
+            text,
+            re.MULTILINE
+        )
 
-        for prefix in remove_prefixes:
+        if title_match:
 
-            if text.startswith(prefix):
+            text = text[
+                title_match.start():
+            ]
 
-                text = text[len(prefix):].strip()
+        # -------------------------------------------------
+        # 너무 많은 연속 빈 줄 정리
+        # -------------------------------------------------
 
-        return text
+        text = re.sub(
+            r"\n{3,}",
+            "\n\n",
+            text
+        )
+
+        return text.strip()
 
     # =====================================================
     # 내용 해시
     # =====================================================
 
-    def make_hash(self, text):
+    def make_hash(
+        self,
+        text
+    ):
 
         normalized = re.sub(
             r"\s+",
@@ -534,11 +544,13 @@ class MapleNotice(commands.Cog):
         ).strip()
 
         return hashlib.sha256(
-            normalized.encode("utf-8")
+            normalized.encode(
+                "utf-8"
+            )
         ).hexdigest()
 
     # =====================================================
-    # 긴 글 Discord용 분할
+    # Discord 2000자 제한 분할
     # =====================================================
 
     def split_text(
@@ -565,11 +577,15 @@ class MapleNotice(commands.Cog):
                 text[:cut].strip()
             )
 
-            text = text[cut:].strip()
+            text = text[
+                cut:
+            ].strip()
 
         if text:
 
-            chunks.append(text)
+            chunks.append(
+                text
+            )
 
         return chunks
 
@@ -593,7 +609,7 @@ class MapleNotice(commands.Cog):
         if not channel:
 
             print(
-                f"❌ 채널을 찾을 수 없습니다: "
+                f"❌ Discord 채널을 찾을 수 없음: "
                 f"{channel_id}",
                 flush=True
             )
@@ -601,22 +617,34 @@ class MapleNotice(commands.Cog):
             return None
 
         # -------------------------------------------------
-        # 임베드
+        # Embed
         # -------------------------------------------------
 
         if category == "maintenance":
 
-            embed_title = "🔧 메이플플래닛 점검 안내"
+            embed_title = (
+                "🔧 메이플플래닛 점검 안내"
+            )
+
+            embed_color = (
+                discord.Color.orange()
+            )
 
         else:
 
-            embed_title = "📢 메이플플래닛 패치노트"
+            embed_title = (
+                "📢 메이플플래닛 패치노트"
+            )
+
+            embed_color = (
+                discord.Color.blue()
+            )
 
         embed = discord.Embed(
             title=embed_title,
             description=title,
             url=url,
-            color=discord.Color.blue()
+            color=embed_color
         )
 
         embed.set_footer(
@@ -632,13 +660,13 @@ class MapleNotice(commands.Cog):
         )
 
         print(
-            f"📨 디스코드 공지 메시지 생성: "
+            f"📨 부모 메시지 생성: "
             f"{message.id}",
             flush=True
         )
 
         # -------------------------------------------------
-        # 스레드 생성
+        # Thread
         # -------------------------------------------------
 
         thread = await message.create_thread(
@@ -647,12 +675,13 @@ class MapleNotice(commands.Cog):
         )
 
         print(
-            f"🧵 스레드 생성: {thread.id}",
+            f"🧵 스레드 생성: "
+            f"{thread.id}",
             flush=True
         )
 
         # -------------------------------------------------
-        # 본문 전송
+        # 본문
         # -------------------------------------------------
 
         chunks = self.split_text(
@@ -666,7 +695,7 @@ class MapleNotice(commands.Cog):
             )
 
         # -------------------------------------------------
-        # 원문 링크
+        # 원문
         # -------------------------------------------------
 
         await thread.send(
@@ -678,15 +707,18 @@ class MapleNotice(commands.Cog):
             "thread_id": thread.id,
             "url": url,
             "title": title,
-            "hash": self.make_hash(content)
+            "hash": self.make_hash(
+                content
+            )
         }
 
     # =====================================================
-    # 기존 공지 수정
+    # 수정된 공지 처리
     # =====================================================
 
     async def update_notice(
         self,
+        category,
         channel_id,
         data,
         title,
@@ -700,7 +732,7 @@ class MapleNotice(commands.Cog):
 
         if not channel:
 
-            return
+            return None
 
         message_id = data.get(
             "message_id"
@@ -724,10 +756,6 @@ class MapleNotice(commands.Cog):
                     message_id
                 )
 
-            except discord.NotFound:
-
-                message = None
-
             except Exception as e:
 
                 print(
@@ -736,7 +764,7 @@ class MapleNotice(commands.Cog):
                 )
 
         # -------------------------------------------------
-        # 스레드
+        # 기존 스레드
         # -------------------------------------------------
 
         thread = None
@@ -755,34 +783,35 @@ class MapleNotice(commands.Cog):
                         thread_id
                     )
 
-                except Exception:
+                except Exception as e:
 
-                    thread = None
+                    print(
+                        f"⚠️ 기존 스레드 조회 실패: {e}",
+                        flush=True
+                    )
 
         # -------------------------------------------------
-        # 스레드가 없어졌다면 새로 생성
+        # 부모 메시지가 사라졌으면 새 공지
         # -------------------------------------------------
 
         if message is None:
 
             print(
-                "⚠️ 기존 공지 메시지를 찾을 수 없어 "
+                "⚠️ 기존 공지 메시지가 없어 "
                 "새 공지를 생성합니다.",
                 flush=True
             )
 
-            new_data = await self.create_notice(
+            return await self.create_notice(
                 channel_id,
-                "maintenance",
+                category,
                 title,
                 url,
                 content
             )
 
-            return new_data
-
         # -------------------------------------------------
-        # 스레드가 있으면 수정 내용 전송
+        # 기존 스레드에 수정 내용 추가
         # -------------------------------------------------
 
         if thread:
@@ -800,7 +829,7 @@ class MapleNotice(commands.Cog):
                 )
 
                 await thread.send(
-                    "아래는 수정된 최신 내용입니다."
+                    "📌 **수정된 최신 내용**"
                 )
 
                 chunks = self.split_text(
@@ -820,25 +849,37 @@ class MapleNotice(commands.Cog):
             except Exception as e:
 
                 print(
-                    f"⚠️ 스레드 업데이트 실패: {e}",
+                    f"⚠️ 수정 내용 전송 실패: {e}",
                     flush=True
                 )
 
         # -------------------------------------------------
-        # 부모 메시지 Embed도 수정
+        # 부모 Embed 수정
         # -------------------------------------------------
 
         try:
 
-            embed = discord.Embed(
-                title=(
+            if category == "maintenance":
+
+                embed_title = (
                     "🔧 메이플플래닛 점검 안내"
-                    if "점검" in title
-                    else "📢 메이플플래닛 패치노트"
-                ),
+                )
+
+                color = discord.Color.orange()
+
+            else:
+
+                embed_title = (
+                    "📢 메이플플래닛 패치노트"
+                )
+
+                color = discord.Color.blue()
+
+            embed = discord.Embed(
+                title=embed_title,
                 description=title,
                 url=url,
-                color=discord.Color.orange()
+                color=color
             )
 
             embed.set_footer(
@@ -852,7 +893,7 @@ class MapleNotice(commands.Cog):
         except Exception as e:
 
             print(
-                f"⚠️ 부모 메시지 수정 실패: {e}",
+                f"⚠️ Embed 수정 실패: {e}",
                 flush=True
             )
 
@@ -875,21 +916,19 @@ class MapleNotice(commands.Cog):
     async def check_notice(
         self,
         category,
-        list_url,
         channel_id
     ):
 
         try:
 
             latest = await self.get_latest_post(
-                list_url
+                category
             )
 
             if not latest:
 
                 print(
-                    f"❌ {category} 최신 글을 "
-                    f"찾지 못했습니다.",
+                    f"❌ {category} 최신 글을 찾지 못했습니다.",
                     flush=True
                 )
 
@@ -908,8 +947,7 @@ class MapleNotice(commands.Cog):
             if not content:
 
                 print(
-                    f"❌ 본문을 가져오지 못했습니다: "
-                    f"{url}",
+                    f"❌ 본문 가져오기 실패: {url}",
                     flush=True
                 )
 
@@ -931,8 +969,8 @@ class MapleNotice(commands.Cog):
             if not previous:
 
                 print(
-                    f"🟡 {category}: 첫 실행이므로 "
-                    f"현재 글을 기준점으로 저장합니다.",
+                    f"🟡 {category}: "
+                    f"첫 실행 기준점 저장",
                     flush=True
                 )
 
@@ -947,18 +985,13 @@ class MapleNotice(commands.Cog):
                 return
 
             # =================================================
-            # 새 게시글
+            # 새 글
             # =================================================
 
             if previous.get("url") != url:
 
                 print(
                     f"🆕 새로운 {category} 발견!",
-                    flush=True
-                )
-
-                print(
-                    f"제목: {title}",
                     flush=True
                 )
 
@@ -979,17 +1012,18 @@ class MapleNotice(commands.Cog):
                 return
 
             # =================================================
-            # 기존 게시글 수정
+            # 기존 글 수정
             # =================================================
 
             if previous.get("hash") != content_hash:
 
                 print(
-                    f"✏️ {category} 게시글 수정 감지!",
+                    f"✏️ {category} 수정 감지!",
                     flush=True
                 )
 
                 updated = await self.update_notice(
+                    category,
                     channel_id,
                     previous,
                     title,
@@ -1006,7 +1040,7 @@ class MapleNotice(commands.Cog):
                 return
 
             # =================================================
-            # 변화 없음
+            # 변경 없음
             # =================================================
 
             print(
@@ -1017,13 +1051,13 @@ class MapleNotice(commands.Cog):
         except Exception as e:
 
             print(
-                f"❌ {category} 확인 중 오류: "
+                f"❌ {category} 확인 오류: "
                 f"{type(e).__name__}: {e}",
                 flush=True
             )
 
     # =====================================================
-    # 자동 감시 루프
+    # 자동 감시
     # =====================================================
 
     async def notice_loop(self):
@@ -1057,14 +1091,12 @@ class MapleNotice(commands.Cog):
                 # 점검
                 await self.check_notice(
                     "maintenance",
-                    MAINTENANCE_LIST_URL,
                     MAINTENANCE_CHANNEL_ID
                 )
 
                 # 패치노트
                 await self.check_notice(
                     "patchnote",
-                    PATCHNOTE_LIST_URL,
                     PATCHNOTE_CHANNEL_ID
                 )
 
@@ -1075,7 +1107,7 @@ class MapleNotice(commands.Cog):
             except Exception as e:
 
                 print(
-                    f"❌ 공지 감시 루프 오류: {e}",
+                    f"❌ 자동 감시 오류: {e}",
                     flush=True
                 )
 
@@ -1084,7 +1116,7 @@ class MapleNotice(commands.Cog):
             )
 
     # =====================================================
-    # 수동 점검 테스트
+    # !공지테스트
     # =====================================================
 
     @commands.command(
@@ -1103,13 +1135,15 @@ class MapleNotice(commands.Cog):
         )
 
         latest = await self.get_latest_post(
-            MAINTENANCE_LIST_URL
+            "maintenance"
         )
 
         if not latest:
 
             await msg.edit(
-                content="❌ 최신 점검 공지를 찾지 못했습니다."
+                content=(
+                    "❌ 최신 점검 공지를 찾지 못했습니다."
+                )
             )
 
             return
@@ -1123,7 +1157,10 @@ class MapleNotice(commands.Cog):
         if not content:
 
             await msg.edit(
-                content="❌ 점검 공지 본문을 가져오지 못했습니다."
+                content=(
+                    "❌ 점검 공지 본문을 "
+                    "가져오지 못했습니다."
+                )
             )
 
             return
@@ -1139,13 +1176,13 @@ class MapleNotice(commands.Cog):
         await msg.edit(
             content=(
                 "✅ 최신 점검 공지를 "
-                "디스코드에 테스트 전송했습니다.\n\n"
+                "테스트 전송했습니다.\n\n"
                 f"**{title}**"
             )
         )
 
     # =====================================================
-    # 수동 패치노트 테스트
+    # !패치노트테스트
     # =====================================================
 
     @commands.command(
@@ -1164,13 +1201,15 @@ class MapleNotice(commands.Cog):
         )
 
         latest = await self.get_latest_post(
-            PATCHNOTE_LIST_URL
+            "patchnote"
         )
 
         if not latest:
 
             await msg.edit(
-                content="❌ 최신 패치노트를 찾지 못했습니다."
+                content=(
+                    "❌ 최신 패치노트를 찾지 못했습니다."
+                )
             )
 
             return
@@ -1184,7 +1223,10 @@ class MapleNotice(commands.Cog):
         if not content:
 
             await msg.edit(
-                content="❌ 패치노트 본문을 가져오지 못했습니다."
+                content=(
+                    "❌ 패치노트 본문을 "
+                    "가져오지 못했습니다."
+                )
             )
 
             return
@@ -1200,7 +1242,7 @@ class MapleNotice(commands.Cog):
         await msg.edit(
             content=(
                 "✅ 최신 패치노트를 "
-                "디스코드에 테스트 전송했습니다.\n\n"
+                "테스트 전송했습니다.\n\n"
                 f"**{title}**"
             )
         )
