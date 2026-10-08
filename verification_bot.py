@@ -23,17 +23,23 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # 기존 bot 정의 코드 아래에 추가
 @bot.event
 async def setup_hook():
-    await bot.load_extension("cogs.boss")         # 기존 boss Cog
-    await bot.load_extension("cogs.Suggestions")  # 건의접수함 Cog
-    await bot.load_extension("cogs.calculator")   # 계산기 Cog 
-    await bot.load_extension("cogs.manyong_license") # 마뇽 라이선스 Cog
+    print("🔴 SETUP_HOOK 진입!")
+
+    await bot.load_extension("cogs.boss")
+    await bot.load_extension("cogs.Suggestions")
+    await bot.load_extension("cogs.calculator")
+    await bot.load_extension("cogs.manyong_license")
     await bot.load_extension("cogs.duck_race")
     await bot.load_extension("cogs.game_panel")
+
+    print("🟡 기존 Cog 로드 완료!")
+
     await bot.load_extension("cogs.maple_notice")
-    print("📢 maple_notice Cog 로드 완료")
-    
-    # 🟢 모든 Cog 로드가 끝난 후 맨 밑에 슬래시 명령어 동기화 추가!
+
+    print("🟢 maple_notice 로드 완료!")
+
     await bot.tree.sync()
+
     print("✅ 모든 Cog 로드 및 슬래시 명령어 동기화 완료!")
 
 # ================= [ ⚙️ 완벽 반영된 서버/채널/역할 ID 설정 ] =================
