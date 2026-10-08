@@ -29,6 +29,7 @@ async def setup_hook():
     await bot.load_extension("cogs.manyong_license") # 마뇽 라이선스 Cog
     await bot.load_extension("cogs.duck_race")
     await bot.load_extension("cogs.game_panel")
+    await bot.load_extension("cogs.maple_notice")
     
     # 🟢 모든 Cog 로드가 끝난 후 맨 밑에 슬래시 명령어 동기화 추가!
     await bot.tree.sync()
