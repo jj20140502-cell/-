@@ -57,6 +57,18 @@ def verify_license():
                 """, (license_hash,))
                 row = cur.fetchone()
 
+                is_extra = False
+                if not row:
+                    cur.execute("""
+                        SELECT b.discord_id, b.status, e.device_hash
+                        FROM manyong_extra_licenses e
+                        JOIN manyong_licenses b ON b.discord_id=e.discord_id
+                        WHERE e.license_key_hash=%s
+                        FOR UPDATE OF e, b
+                    """, (license_hash,))
+                    row = cur.fetchone()
+                    is_extra = row is not None
+
                 if not row:
                     return jsonify({
                         "ok": False,
@@ -74,13 +86,20 @@ def verify_license():
                     }), 403
 
                 if not registered:
-                    cur.execute("""
-                        UPDATE manyong_licenses
-                        SET device_hash=%s,
-                            activated_at=COALESCE(activated_at, NOW()),
-                            updated_at=NOW()
-                        WHERE discord_id=%s
-                    """, (device_hash, discord_id))
+                    if is_extra:
+                        cur.execute("""
+                            UPDATE manyong_extra_licenses
+                            SET device_hash=%s,
+                                activated_at=COALESCE(activated_at, NOW()), updated_at=NOW()
+                            WHERE discord_id=%s
+                        """, (device_hash, discord_id))
+                    else:
+                        cur.execute("""
+                            UPDATE manyong_licenses
+                            SET device_hash=%s,
+                                activated_at=COALESCE(activated_at, NOW()), updated_at=NOW()
+                            WHERE discord_id=%s
+                        """, (device_hash, discord_id))
                     con.commit()
 
                     return jsonify({
