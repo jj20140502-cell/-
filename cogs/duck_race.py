@@ -95,8 +95,9 @@ class RaceView(discord.ui.View):
             users = self.users.copy()
             labels = {d: self.labels.get(u, f"오리 {d+1:02}") for d,u in users.items()}
         try:
-            await self.message.edit(content='🏁 자동 경주 영상 생성 중입니다. 잠시 기다려 주세요.',view=self)
+            await self.message.edit(content='🏁 GIF 생성 대기 중입니다.',view=self)
             async with render_gate:
+                await self.message.edit(content="🎞️ 가벼운 GIF를 생성 중입니다.",view=self)
                 with tempfile.TemporaryDirectory(prefix='duck-race-') as temp:
                     ducks = sorted(users)
                     frames, order = simulate(ducks)
@@ -113,6 +114,9 @@ class RaceView(discord.ui.View):
                     await asyncio.to_thread(save_results,interaction.guild_id,users,order)
             await announce_results(interaction.channel,users,labels,order,uploaded_at)
             await self.message.edit(content='✅ 경주가 완료되었습니다. 아래 영상을 확인하세요.',view=self)
+        except TimeoutError:
+            logging.exception('GIF render timed out')
+            await self.message.edit(content='GIF 생성 시간이 초과되었습니다. 봇 로그를 확인하고 다시 모집해 주세요.',view=self)
         except Exception:
             logging.exception('Race failed')
             await self.message.edit(content='경주 처리에 실패했습니다. 봇 실행 창의 오류를 확인하고 다시 생성하세요.',view=self)

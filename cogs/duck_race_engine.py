@@ -1,7 +1,7 @@
 """Seeded automatic simulation and pixel renderer; no Discord dependency."""
 from functools import lru_cache
 import random
-import subprocess
+import time
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -56,7 +56,7 @@ def fit_name(name, max_width, size):
         name = name[:-1]
     return name + '…'
 
-def draw_frame(ducks, positions, events, tick, labels=None):
+def draw_frame(ducks, positions, events, tick, labels=None, native=False):
     labels = labels or {}
     im = Image.new('RGB', (480, 300), '#19352e')
     dr = ImageDraw.Draw(im)
@@ -80,43 +80,48 @@ def draw_frame(ducks, positions, events, tick, labels=None):
                     dr.rectangle((x+sx,y+5+sy-bob,x+sx,y+5+sy-bob),fill=palette[c])
         if d in events:
             dr.text((min(x,380),y),events[d],fill='#ffe066')
-    return im.resize((960,600), Image.Resampling.NEAREST)
+    return im if native else im.resize((960,600), Image.Resampling.NEAREST)
 
 def render(ducks, frames, order, output, labels=None):
+    """Low-memory GIF: fixed palette, 480x300, 8 fps, no FFmpeg process."""
     labels = labels or {}
-    # Fit the full race into 27 seconds, then show results for 3 seconds.
-    count = FPS * 27
-    frames = [frames[round(i * (len(frames)-1) / (count-1))] for i in range(count)]
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    import imageio_ffmpeg
-    cmd = [imageio_ffmpeg.get_ffmpeg_exe(), '-y', '-loglevel', 'error',
-           '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', '960x600',
-           '-framerate', str(FPS), '-i', '-', '-an', '-filter_complex_threads', '1',
-           '-filter_complex',
-           'scale=720:450:flags=neighbor,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=none',
-           '-loop', '0', str(output)]
-    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    # A fixed palette avoids buffering full RGB frames in FFmpeg's palette filter.
+    colors = COLORS + ['#19352e','#ffe066','#ffffff','#4b9e58','#448f50',
+                       '#244a40','#152326','#172834','#111111','#ff8c33']
+    rgb = []
+    for color in colors:
+        rgb.extend(bytes.fromhex(color[1:]))
+    palette = Image.new('P',(1,1))
+    palette.putpalette(rgb + [0]*(768-len(rgb)))
+    images = []
+    started = time.monotonic()
     try:
-        for tick,(positions,events) in enumerate(frames):
-            process.stdin.write(draw_frame(ducks,positions,events,tick,labels).tobytes())
-        final = draw_frame(ducks,frames[-1][0],{},len(frames),labels)
+        count = 27 * 8
+        for i in range(count):
+            if time.monotonic()-started > 90:
+                raise TimeoutError('GIF 생성이 90초를 초과했습니다.')
+            positions, events = frames[round(i*(len(frames)-1)/(count-1))]
+            image = draw_frame(ducks, positions, events, round(i*FPS/8), labels, native=True)
+            images.append(image.quantize(palette=palette,dither=Image.Dither.NONE))
+            image.close()
+        final = draw_frame(ducks,frames[-1][0],{},27*FPS,labels,native=True)
         dr = ImageDraw.Draw(final)
-        dr.rectangle((190,65,770,565),fill='#172834',outline='#ffe066',width=4)
-        winner = fit_name(labels.get(order[0], f'오리 {order[0]+1:02}'), 430, 28)
-        dr.text((220,88),f'우승 · {winner}',fill='#ffe066',font=font(28))
-        for rank, duck in enumerate(order, 1):
-            label = fit_name(labels.get(duck, f'오리 {duck+1:02}'), 440, 24)
-            dr.text((225,145+(rank-1)*39),f'{rank}위 · {label}',fill=COLORS[duck],font=font(24))
-        for _ in range(FPS*3):
-            process.stdin.write(final.tobytes())
-        process.stdin.close()
-        error = process.stderr.read().decode()
-        if process.wait() != 0:
-            raise RuntimeError(error)
+        dr.rectangle((95,32,385,283),fill='#172834',outline='#ffe066',width=2)
+        winner = fit_name(labels.get(order[0],f'오리 {order[0]+1:02}'),215,14)
+        dr.text((110,44),f'우승 · {winner}',fill='#ffe066',font=font(14))
+        for rank,duck in enumerate(order,1):
+            label=fit_name(labels.get(duck,f'오리 {duck+1:02}'),220,12)
+            dr.text((112,72+(rank-1)*19),f'{rank}위 · {label}',fill=COLORS[duck],font=font(12))
+        images.append(final.quantize(palette=palette,dither=Image.Dither.NONE))
+        final.close()
+        # GIF delay uses 10ms units: alternating 120/130ms = 8fps exactly.
+        durations = [120 if i%2==0 else 130 for i in range(count)] + [3000]
+        images[0].save(output,save_all=True,append_images=images[1:],
+                       duration=durations,loop=0,optimize=False,disposal=1)
+        return output
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
-    return output
-
+        for image in images:
+            image.close()
+        palette.close()
