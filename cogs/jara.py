@@ -11,6 +11,42 @@ from discord import app_commands
 LEAVE_LOG_CHANNEL_ID = 1520647014709329940
 
 
+# ZIP 내 상시 패널의 고정 custom_id. 임시 게임 버튼은 포함하지 않습니다.
+PERMANENT_PANEL_CUSTOM_IDS = frozenset({
+    "boss_panel_kill_btn",
+    "calculator:distribute:sale", "calculator:distribute:received",
+    "calculator:exp:detail", "calculator:cash:open",
+    "games:bomb:v1", "games:duck:v1", "games:raid:v1",
+    "manyong_license_request_v1", "main_suggestion_btn",
+    "ticket_close_btn", "main_verify_btn", "invest_upload_btn",
+    "admin_approve", "admin_hold", "admin_deny",
+})
+
+
+def is_protected_panel(message, bot_user_id):
+    """고정 메시지와 이 봇의 상시 패널을 재시작 후에도 보호합니다."""
+    if message.pinned:
+        return True
+    if message.author.id != bot_user_id:
+        return False
+
+    def is_panel_component(component):
+        custom_id = getattr(component, "custom_id", None)
+        if custom_id in PERMANENT_PANEL_CUSTOM_IDS:
+            return True
+        if isinstance(custom_id, str) and custom_id.startswith("manyong_thread_"):
+            return True
+        # DownloadView는 custom_id 없는 링크 버튼입니다.
+        url = getattr(component, "url", None)
+        if isinstance(url, str) and url.startswith(
+            "https://github.com/jj20140502-cell/-/releases/download/"
+        ) and url.endswith("/ManyongDetector.exe"):
+            return True
+        return any(is_panel_component(child) for child in getattr(component, "children", ()))
+
+    return any(is_panel_component(component) for component in message.components)
+
+
 # ==============================
 # 상식퀴즈 문제
 # ==============================
@@ -137,7 +173,7 @@ class Jara(commands.Cog):
 
     @app_commands.command(
         name="purge",
-        description="현재 채널의 메시지를 삭제합니다."
+        description="상시 패널과 고정 메시지를 제외하고 현재 채널의 메시지를 삭제합니다."
     )
     @app_commands.describe(action="실행할 작업")
     @app_commands.choices(
@@ -167,10 +203,16 @@ class Jara(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        deleted = await interaction.channel.purge(limit=None)
+        # check는 Discord에서 가져온 메시지의 실제 컴포넌트를 검사합니다.
+        # 실행 중 새로 올라오는 메시지는 이번 삭제 범위에 포함하지 않습니다.
+        deleted = await interaction.channel.purge(
+            limit=None,
+            before=interaction.created_at,
+            check=lambda message: not is_protected_panel(message, self.bot.user.id),
+        )
 
         await interaction.followup.send(
-            f"메시지 {len(deleted)}개를 삭제했습니다.",
+            f"메시지 {len(deleted)}개를 삭제했습니다. 상시 패널과 고정 메시지는 보존했습니다.",
             ephemeral=True
         )
 
