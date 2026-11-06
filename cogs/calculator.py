@@ -435,7 +435,8 @@ class Calculator(commands.Cog):
                     "이 채널에 아래 형식으로 바로 입력할 수 있습니다.\n\n"
                     "`현재레벨 현재경험치% 목표레벨`\n예: `195 53.2% 220`\n\n"
                     "`%`를 생략한 `195 53.2 220` 형식도 사용할 수 있습니다.\n\n"
-                    "시간당 사냥 경험치나 보스 경험치까지 계산하려면 아래 **상세 입력** 버튼을 이용해주세요."
+                    "시간당 경험치를 추가하면 예상 사냥 시간도 계산합니다. 예: `200 0 220 6억`\n"
+                    "보스 경험치도 반영하려면 아래 **상세 입력** 버튼을 이용해주세요."
                 ),
                 color=discord.Color.green()
             )
@@ -455,7 +456,7 @@ class Calculator(commands.Cog):
         if message.author.bot or message.channel.id != self.EXP_CHANNEL_ID:
             return
 
-        match = re.fullmatch(r"(\d+)\s+([\d.]+)%?\s+(\d+)", message.content.strip())
+        match = re.fullmatch(r"(\d+)\s+(\d+(?:\.\d+)?)%?\s+(\d+)(?:\s+(.+))?", message.content.strip())
         if not match:
             return
 
@@ -477,6 +478,17 @@ class Calculator(commands.Cog):
             await message.reply("❌ 현재 경험치는 0~100% 사이로 입력해주세요.", mention_author=False)
             return
 
+        hourly_exp = None
+        if match.group(4) is not None:
+            hourly_raw = match.group(4).replace(",", "").strip()
+            if not re.fullmatch(r"(?:[0-9]+억(?:\s*[0-9]+만)?|[0-9]+만|[0-9]+)", hourly_raw):
+                await message.reply("❌ 시간당 경험치는 `6억`, `1억 8000만`, `600000000`처럼 입력해주세요.", mention_author=False)
+                return
+            hourly_exp = parse_numeric_input(hourly_raw)
+            if hourly_exp <= 0:
+                await message.reply("❌ 시간당 경험치는 0보다 커야 합니다.", mention_author=False)
+                return
+
         level_max_exp = EXP_TABLE[cur_lvl]
         current_exp = math.floor(level_max_exp * (current_pct / 100.0))
         total_required_exp = level_max_exp - current_exp
@@ -495,6 +507,11 @@ class Calculator(commands.Cog):
             inline=True
         )
         embed.add_field(name="🎯 총 필요 경험치", value=f"**{total_required_exp:,}** EXP", inline=False)
+        if hourly_exp is not None:
+            total_minutes = (total_required_exp * 60 + hourly_exp - 1) // hourly_exp
+            hours, minutes = divmod(total_minutes, 60)
+            embed.add_field(name="🔥 시간당 사냥 경험치", value=f"{hourly_exp:,} EXP", inline=True)
+            embed.add_field(name="⏳ 예상 남은 사냥 시간", value=f"**{hours}시간 {minutes}분**", inline=True)
         await message.reply(embed=embed, mention_author=False)
 
 
