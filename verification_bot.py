@@ -26,7 +26,7 @@ class MyBot(commands.Bot):
         await self.load_extension("cogs.boss")
         await self.load_extension("cogs.Suggestions")
         await self.load_extension("cogs.calculator")
-        await self.load_extension("cogs.manyong_license")
+        #await self.load_extension("cogs.manyong_license") #마뇽감지기 기능중단 재개시 #지울것
         await self.load_extension("cogs.duck_race")
         await self.load_extension("cogs.game_panel")
 
